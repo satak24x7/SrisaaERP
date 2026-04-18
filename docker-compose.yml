@@ -1,0 +1,115 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: govprojects-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-govprojects}
+      MYSQL_USER: ${MYSQL_USER:-govprojects}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-govprojects}
+    ports:
+      - "3306:3306"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-authentication-plugin=caching_sha2_password
+      - --sql_mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: govprojects-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: govprojects-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"      # AMQP
+      - "15672:15672"    # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: govprojects-keycloak
+    restart: unless-stopped
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HTTP_PORT: 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+
+  minio:
+    image: minio/minio:latest
+    container_name: govprojects-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"     # S3 API
+      - "9001:9001"     # Console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: govprojects-opensearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=Admin@123
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: govprojects-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"     # SMTP
+      - "8025:8025"     # Web UI
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
+  keycloak-data:
+  minio-data:
+  opensearch-data:

@@ -1,0 +1,64 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Angular
+apps/web/.angular/
+apps/web/.sass-cache/
+
+# Mobile (Ionic / Capacitor)
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/.angular/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# Local uploads / temp
+tmp/
+uploads/
+.cache/
+
+# Test artifacts
+playwright-report/
+test-results/
+
+# Docker volumes (when developers use bind mounts)
+docker-data/
+
+# Local compose overrides (host-specific port remaps, extra services, etc.)
+docker-compose.override.yml

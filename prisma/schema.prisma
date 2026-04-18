@@ -1,0 +1,1319 @@
+// GovProjects Platform — Prisma schema
+//
+// Conventions (see docs/database/schema.md):
+// - All IDs are ULID-like strings (26 chars) generated in app code
+// - Monetary amounts stored as BigInt in paise
+// - Timestamps: created_at / updated_at / deleted_at on every table
+// - Every domain row carries business_unit_id where applicable
+// - Soft delete by default (filter on deleted_at IS NULL)
+//
+// This file is a STARTING POINT. Fill in remaining entities per the module docs.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+  // The default "library" Node-API engine does not support 32-bit Node builds (e.g. Win x86).
+  // Switch to the "binary" engine so installs succeed on developer machines that have 32-bit Node.
+  engineType      = "binary"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================================================
+// Shared enums
+// ==========================================================================
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// OpportunityStage and EntryPath moved to lookup lists
+
+enum ManagedTenderStage {
+  M1_INITIATE
+  M2_STAKEHOLDERS
+  M3_DEMO
+  M4_MASTER_SI
+  M5_DPR_SUBMITTED
+  M6_DPR_APPROVED
+  M7_RFP_PREPARED
+}
+
+enum GovernmentType {
+  NATIONAL
+  STATE
+}
+
+enum InfluencerType {
+  POLITICAL
+  BUREAUCRAT
+  OTHER
+}
+
+enum InfluenceLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CHAMPION
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  LOST
+}
+
+enum LeadSource {
+  WEBSITE
+  REFERRAL
+  CONFERENCE
+  GEM_PORTAL
+  CPPP
+  COLD_OUTREACH
+  EXISTING_ACCOUNT
+  OTHER
+}
+
+enum ExpenseSheetType {
+  PRE_PROJECT
+  DURING_PROJECT
+  ADMIN_GENERAL
+  REIMBURSEMENT
+}
+
+enum ExpenseSheetStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  RETURNED_FOR_CLARIFICATION
+  APPROVED
+  PAYMENT_PENDING
+  PAID
+  REJECTED
+}
+
+enum MaterialRequestStatus {
+  DRAFT
+  SUBMITTED
+  PM_APPROVED
+  BU_HEAD_APPROVED
+  INDENTED
+  PO_RAISED
+  PARTIALLY_FULFILLED
+  FULFILLED
+  REJECTED
+  CANCELLED
+}
+
+enum Priority {
+  NORMAL
+  URGENT
+  EMERGENCY
+}
+
+enum TaskStatus {
+  BACKLOG
+  TO_DO
+  IN_PROGRESS
+  BLOCKED
+  IN_REVIEW
+  DONE
+}
+
+// ==========================================================================
+// Module 1 — Organization & Business Units
+// ==========================================================================
+
+model Company {
+  id            String   @id @db.VarChar(26)
+  legalName     String   @map("legal_name") @db.VarChar(255)
+  cin           String?  @db.VarChar(32)
+  logoUri       String?  @map("logo_uri") @db.VarChar(512)
+  registeredAddress String? @map("registered_address") @db.Text
+  corporateAddress  String? @map("corporate_address") @db.Text
+
+  // Statutory information
+  pan           String?  @db.VarChar(10)
+  tan           String?  @db.VarChar(10)
+  gstin         String?  @db.VarChar(15)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@map("company")
+}
+
+model CompanyDocument {
+  id           String  @id @db.VarChar(26)
+  name         String  @db.VarChar(255)          // user-given label
+  fileName     String  @map("file_name") @db.VarChar(255)
+  mimeType     String  @map("mime_type") @db.VarChar(128)
+  fileSize     Int     @map("file_size")          // bytes
+  storagePath  String  @map("storage_path") @db.VarChar(512) // relative path on disk
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@map("company_document")
+}
+
+model BusinessUnit {
+  id                   String   @id @db.VarChar(26)
+  name                 String   @db.VarChar(128)
+  description          String?  @db.Text
+  costCentre           String?  @map("cost_centre") @db.VarChar(32)
+  buHeadUserId         String   @map("bu_head_user_id") @db.VarChar(26)
+  // JSON defining approval thresholds by module and amount. See docs/modules/04-expense-management.md
+  approvalThresholds   Json?    @map("approval_thresholds")
+  status               String   @default("ACTIVE") @db.VarChar(16)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  buHead   User @relation("BUHead", fields: [buHeadUserId], references: [id])
+
+  leads            Lead[]
+  opportunities    Opportunity[]
+  projects         Project[]
+  expenseSheets    ExpenseSheet[]
+  materialRequests MaterialRequest[]
+  members          BusinessUnitMember[]
+  travelPlans      TravelPlan[]
+
+  @@index([name])
+  @@map("business_unit")
+}
+
+model Role {
+  id          String  @id @db.VarChar(26)
+  name        String  @unique @db.VarChar(64)
+  displayName String  @map("display_name") @db.VarChar(128)
+  description String? @db.Text
+  permissions Json?
+  isSystem    Boolean @default(false) @map("is_system")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  members         BusinessUnitMember[]
+  userRoles       UserRole[]
+  sharedPasswords PasswordEntry[]
+
+  @@map("role")
+}
+
+model BusinessUnitMember {
+  id             String @id @db.VarChar(26)
+  businessUnitId String @map("business_unit_id") @db.VarChar(26)
+  userId         String @map("user_id") @db.VarChar(26)
+  roleId         String @map("role_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id])
+  user         User         @relation("BUMemberships", fields: [userId], references: [id])
+  role         Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([businessUnitId, userId])
+  @@index([userId])
+  @@map("business_unit_member")
+}
+
+model User {
+  id         String     @id @db.VarChar(26)
+  externalId String     @unique @map("external_id") @db.VarChar(128) // Keycloak sub
+  email      String     @unique @db.VarChar(255)
+  fullName   String     @map("full_name") @db.VarChar(255)
+  phone      String?    @db.VarChar(32)
+  status     UserStatus @default(ACTIVE)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  employee             Employee?
+  buHeadOf             BusinessUnit[] @relation("BUHead")
+  buMemberships        BusinessUnitMember[] @relation("BUMemberships")
+  userRoles            UserRole[]
+  ownedOpportunities   Opportunity[]          @relation("OpportunityOwner")
+  activities           Activity[]             @relation("ActivityUser")
+  ledTravelPlans       TravelPlan[]           @relation("TravelLeader")
+  travelMemberships    TravelPlanTraveller[]
+  passwordEntries      PasswordEntry[]        @relation("PasswordOwner")
+
+  @@map("user")
+}
+
+model UserRole {
+  id     String @id @db.VarChar(26)
+  userId String @map("user_id") @db.VarChar(26)
+  roleId String @map("role_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+  role Role @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, roleId])
+  @@index([roleId])
+  @@map("user_role")
+}
+
+model Employee {
+  id                String   @id @db.VarChar(26)
+  userId            String   @unique @map("user_id") @db.VarChar(26)
+  employeeCode      String   @unique @map("employee_code") @db.VarChar(32)
+  designation       String?  @db.VarChar(128)
+  grade             String?  @db.VarChar(16)
+  qualifications    Json?    // [{ degree, institute, year }, ...]
+  skills            Json?    // ["node", "angular", ...]
+  cvUri             String?  @map("cv_uri") @db.VarChar(512)
+  dateOfJoining     DateTime? @map("date_of_joining") @db.Date
+  availability      String?  @db.VarChar(32) // AVAILABLE | ON_PROJECT | ON_LEAVE
+  reportingManagerId String? @map("reporting_manager_id") @db.VarChar(26)
+
+  // Sensitive - encrypted at column level in production
+  panHash       String? @map("pan_hash") @db.VarChar(128)
+  aadhaarHash   String? @map("aadhaar_hash") @db.VarChar(128)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("employee")
+}
+
+model StatutoryRegistration {
+  id              String   @id @db.VarChar(26)
+  name            String   @db.VarChar(128)       // e.g. "GST Registration", "PAN Card"
+  registrationId  String   @map("registration_id") @db.VarChar(128)
+  portalUrl       String?  @map("portal_url") @db.VarChar(512)
+  login           String?  @db.VarChar(255)       // encrypted at rest in prod
+  password        String?  @db.VarChar(255)       // encrypted at rest in prod
+  mobile          String?  @db.VarChar(32)        // associated mobile
+  email           String?  @db.VarChar(255)       // associated email
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@map("statutory_registration")
+}
+
+model AppConfig {
+  id    String @id @db.VarChar(26)
+  key   String @unique @db.VarChar(64)
+  value String @db.Text
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("app_config")
+}
+
+model LookupList {
+  id    String @id @db.VarChar(26)
+  code  String @unique @db.VarChar(64)    // e.g. "account_type", "lead_source"
+  name  String @db.VarChar(128)           // e.g. "Account Type", "Lead Source"
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  items LookupItem[]
+
+  @@map("lookup_list")
+}
+
+model LookupItem {
+  id         String  @id @db.VarChar(26)
+  listId     String  @map("list_id") @db.VarChar(26)
+  label      String  @db.VarChar(128)     // display text
+  value      String  @db.VarChar(64)      // stored value
+  sortOrder  Int     @default(0) @map("sort_order")
+  isActive   Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  list LookupList @relation(fields: [listId], references: [id])
+
+  @@unique([listId, value])
+  @@index([listId, sortOrder])
+  @@map("lookup_item")
+}
+
+model Government {
+  id             String         @id @db.VarChar(26)
+  code           String         @unique @db.VarChar(5)
+  name           String         @db.VarChar(255)
+  governmentType GovernmentType @map("government_type")
+  country        String         @db.VarChar(128)       // e.g. "India"
+  capital        String?        @db.VarChar(128)
+  notes          String?        @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  influencers Influencer[]
+  accounts    Account[]
+
+  @@index([governmentType])
+  @@index([country])
+  @@map("government")
+}
+
+model Certification {
+  id             String   @id @db.VarChar(26)
+  name           String   @db.VarChar(128)
+  scope          String?  @db.Text
+  certificateNo  String?  @map("certificate_no") @db.VarChar(64)
+  issuingBody    String?  @map("issuing_body") @db.VarChar(128)
+  validityStart  DateTime? @map("validity_start") @db.Date
+  validityEnd    DateTime? @map("validity_end") @db.Date
+  certificateUri String?  @map("certificate_uri") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@index([validityEnd])
+  @@map("certification")
+}
+
+model Dsc {
+  id            String    @id @db.VarChar(26)
+  holderUserId  String    @map("holder_user_id") @db.VarChar(26)
+  serialNo      String    @unique @map("serial_no") @db.VarChar(128)
+  issuer        String?   @db.VarChar(128)
+  validityStart DateTime? @map("validity_start") @db.Date
+  validityEnd   DateTime? @map("validity_end") @db.Date
+  status        String    @default("ACTIVE") @db.VarChar(16) // ACTIVE | EXPIRED | REVOKED
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@index([validityEnd])
+  @@map("dsc")
+}
+
+model Empanelment {
+  id               String   @id @db.VarChar(26)
+  agencyName       String   @map("agency_name") @db.VarChar(255)
+  category         String?  @db.VarChar(128)
+  empanelmentNo    String?  @map("empanelment_no") @db.VarChar(64)
+  rateContractRef  String?  @map("rate_contract_ref") @db.VarChar(128)
+  validityStart    DateTime? @map("validity_start") @db.Date
+  validityEnd      DateTime? @map("validity_end") @db.Date
+  certificateUri   String?  @map("certificate_uri") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@index([validityEnd])
+  @@map("empanelment")
+}
+
+model TurnoverRecord {
+  id              String   @id @db.VarChar(26)
+  financialYear   String   @map("financial_year") @db.VarChar(10) // "2024-25"
+  revenuePaise    BigInt   @map("revenue_paise")
+  netWorthPaise   BigInt?  @map("net_worth_paise")
+  auditorName     String?  @map("auditor_name") @db.VarChar(255)
+  auditedFlag     Boolean  @default(false) @map("audited_flag")
+  certificateUri  String?  @map("certificate_uri") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@unique([financialYear])
+  @@map("turnover_record")
+}
+
+model PastProject {
+  id                    String   @id @db.VarChar(26)
+  title                 String   @db.VarChar(255)
+  clientName            String   @map("client_name") @db.VarChar(255)
+  orderValuePaise       BigInt   @map("order_value_paise")
+  startDate             DateTime? @map("start_date") @db.Date
+  completionDate        DateTime? @map("completion_date") @db.Date
+  completionPct         Int      @default(0) @map("completion_pct")
+  completionCertUri     String?  @map("completion_cert_uri") @db.VarChar(512)
+  domain                String?  @db.VarChar(128)
+  keywords              Json?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@map("past_project")
+}
+
+model BankAccount {
+  id          String  @id @db.VarChar(26)
+  bankName    String  @map("bank_name") @db.VarChar(128)
+  accountName String  @map("account_name") @db.VarChar(255)
+  accountNo   String  @map("account_no") @db.VarChar(64) // encrypted in prod
+  ifsc        String  @db.VarChar(16)
+  branch      String? @db.VarChar(255)
+  purpose     String  @db.VarChar(32) // EMD | RECEIVABLES | PAYROLL | GENERAL
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@map("bank_account")
+}
+
+// ==========================================================================
+// Module 2 — Sales (stub; fill in per docs/modules/02-sales.md)
+// ==========================================================================
+
+model Account {
+  id               String      @id @db.VarChar(26)
+  code             String      @unique @db.VarChar(5)
+  name             String      @db.VarChar(255)
+  shortName        String?     @map("short_name") @db.VarChar(64)
+  accountType      String      @map("account_type") @db.VarChar(64)
+  parentAccountId  String?     @map("parent_account_id") @db.VarChar(26)
+  website          String?     @db.VarChar(512)
+  phone            String?     @db.VarChar(32)
+  email            String?     @db.VarChar(255)
+  address          String?     @db.Text
+  city             String?     @db.VarChar(128)
+  state            String?     @db.VarChar(64)
+  pincode          String?     @db.VarChar(10)
+  gstin            String?     @db.VarChar(15)
+  notes            String?     @db.Text
+  ownerUserId      String?     @map("owner_user_id") @db.VarChar(26)
+  governmentId     String?     @map("government_id") @db.VarChar(26)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  parentAccount   Account?         @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts   Account[]        @relation("AccountHierarchy")
+  government      Government?      @relation(fields: [governmentId], references: [id])
+  accountContacts        AccountContact[]
+  leads                  Lead[]
+  opportunities          Opportunity[] @relation("OpportunityAccount")
+  endClientOpportunities Opportunity[] @relation("OpportunityEndClient")
+
+  @@index([name])
+  @@index([accountType])
+  @@map("account")
+}
+
+model Contact {
+  id              String          @id @db.VarChar(26)
+  firstName       String          @map("first_name") @db.VarChar(128)
+  lastName        String?         @map("last_name") @db.VarChar(128)
+  designation     String?         @db.VarChar(128)
+  department      String?         @db.VarChar(255)
+  email           String?         @db.VarChar(255)
+  phone           String?         @db.VarChar(32)
+  mobile          String?         @db.VarChar(32)
+  influenceLevel  InfluenceLevel? @map("influence_level")
+  notes           String?         @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  accountContacts     AccountContact[]
+  leads               Lead[]               @relation("LeadContact")
+  opportunityContacts OpportunityContact[]
+  activityContacts    ActivityContact[]
+
+  @@index([lastName, firstName])
+  @@map("contact")
+}
+
+model AccountContact {
+  id        String @id @db.VarChar(26)
+  accountId String @map("account_id") @db.VarChar(26)
+  contactId String @map("contact_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  account Account @relation(fields: [accountId], references: [id])
+  contact Contact @relation(fields: [contactId], references: [id])
+
+  @@unique([accountId, contactId])
+  @@index([contactId])
+  @@map("account_contact")
+}
+
+model Influencer {
+  id               String         @id @db.VarChar(26)
+  name             String         @db.VarChar(255)
+  influencerType   InfluencerType @map("influencer_type")
+  governmentId     String         @map("government_id") @db.VarChar(26)
+  partyName        String?        @map("party_name") @db.VarChar(128)
+  qualifier        String?        @db.VarChar(255)
+  phone            String?        @db.VarChar(32)
+  email            String?        @db.VarChar(255)
+  influenceLevel   InfluenceLevel? @map("influence_level")
+  rating           Int?           @db.TinyInt                             // 1–5 stars
+  notes            String?        @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  government              Government              @relation(fields: [governmentId], references: [id])
+  opportunityInfluencers   OpportunityInfluencer[]
+
+  @@index([governmentId])
+  @@index([influencerType])
+  @@map("influencer")
+}
+
+model OpportunityInfluencer {
+  id             String @id @db.VarChar(26)
+  opportunityId  String @map("opportunity_id") @db.VarChar(26)
+  influencerId   String @map("influencer_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id])
+  influencer  Influencer  @relation(fields: [influencerId], references: [id])
+
+  @@unique([opportunityId, influencerId])
+  @@index([influencerId])
+  @@map("opportunity_influencer")
+}
+
+model OpportunityContact {
+  id            String @id @db.VarChar(26)
+  opportunityId String @map("opportunity_id") @db.VarChar(26)
+  contactId     String @map("contact_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id])
+  contact     Contact     @relation(fields: [contactId], references: [id])
+
+  @@unique([opportunityId, contactId])
+  @@index([contactId])
+  @@map("opportunity_contact")
+}
+
+model Lead {
+  id                    String     @id @db.VarChar(26)
+  title                 String     @db.VarChar(255)
+  accountId             String?    @map("account_id") @db.VarChar(26)
+  contactId             String?    @map("contact_id") @db.VarChar(26)
+  businessUnitId        String?    @map("business_unit_id") @db.VarChar(26)
+  source                LeadSource
+  status                LeadStatus @default(NEW)
+  description           String?    @db.Text
+  estimatedValuePaise   BigInt?    @map("estimated_value_paise")
+  expectedClosureDate   DateTime?  @map("expected_closure_date") @db.Date
+  ownerUserId           String?    @map("owner_user_id") @db.VarChar(26)
+  convertedOpportunityId String?   @map("converted_opportunity_id") @db.VarChar(26)
+  lostReason            String?    @map("lost_reason") @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  account              Account?      @relation(fields: [accountId], references: [id])
+  contact              Contact?      @relation("LeadContact", fields: [contactId], references: [id])
+  businessUnit         BusinessUnit? @relation(fields: [businessUnitId], references: [id])
+  convertedOpportunity Opportunity?  @relation("ConvertedFromLead", fields: [convertedOpportunityId], references: [id])
+
+  @@index([status])
+  @@index([accountId])
+  @@index([businessUnitId, status])
+  @@map("lead")
+}
+
+model Opportunity {
+  id                 String            @id @db.VarChar(26)
+  businessUnitId     String            @map("business_unit_id") @db.VarChar(26)
+  accountId          String?           @map("account_id") @db.VarChar(26)
+  endClientAccountId String?           @map("end_client_account_id") @db.VarChar(26)
+  title              String            @db.VarChar(255)
+  clientName         String?           @map("client_name") @db.VarChar(255)
+  stage              String            @db.VarChar(64)       // from lookup list "opportunity_stage"
+  entryPath          String            @map("entry_path") @db.VarChar(64) // from lookup list "entry_path"
+  contractValuePaise BigInt?           @map("contract_value_paise")
+  probabilityPct     Int?              @map("probability_pct")
+  ownerUserId        String?           @map("owner_user_id") @db.VarChar(26)
+  managedTenderId    String?           @map("managed_tender_id") @db.VarChar(26)
+  activeTenderId     String?           @map("active_tender_id") @db.VarChar(26)
+  submissionDue      DateTime?         @map("submission_due") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  businessUnit BusinessUnit @relation(fields: [businessUnitId], references: [id])
+  account                Account?     @relation("OpportunityAccount", fields: [accountId], references: [id])
+  endClient              Account?     @relation("OpportunityEndClient", fields: [endClientAccountId], references: [id])
+  owner                  User?        @relation("OpportunityOwner", fields: [ownerUserId], references: [id])
+  projects               Project[]
+  leads                  Lead[]                  @relation("ConvertedFromLead")
+  opportunityContacts    OpportunityContact[]
+  opportunityInfluencers OpportunityInfluencer[]
+  costOfSaleEntries      CostOfSaleEntry[]
+
+  @@index([businessUnitId, stage, createdAt])
+  @@index([accountId])
+  @@map("opportunity")
+}
+
+// ==========================================================================
+// Cost of Sale — expense tracking per opportunity (FR-2.18)
+// ==========================================================================
+
+model CostOfSaleEntry {
+  id            String   @id @db.VarChar(26)
+  opportunityId String   @map("opportunity_id") @db.VarChar(26)
+  category      String   @db.VarChar(64) // TRAVEL, ACCOMMODATION, DEMO_PRESENTATION, CONSULTING, DOCUMENTATION, STATIONERY_PRINTING, COMMUNICATION, OTHER
+  entryDate     DateTime @map("entry_date") @db.Date
+  description   String   @db.VarChar(500)
+  amountPaise   BigInt   @map("amount_paise")
+  status        String   @default("SPENT") @db.VarChar(32) // SPENT, COMMITTED, PROJECTED
+  receiptRef    String?  @map("receipt_ref") @db.VarChar(255)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id])
+
+  @@index([opportunityId, category])
+  @@index([opportunityId, status])
+  @@map("cost_of_sale_entry")
+}
+
+// TODO(R11): ManagedTender, ManagedTenderStakeholder, Dpr, Consortium,
+//            ActiveTender, Proposal, BidSubmission, BidEvaluationResult,
+//            Award, LossRecord
+
+// ==========================================================================
+// Module 3 — Project Execution (stub; fill in per docs/modules/03-project-execution.md)
+// ==========================================================================
+
+model Project {
+  id                 String   @id @db.VarChar(26)
+  businessUnitId     String   @map("business_unit_id") @db.VarChar(26)
+  opportunityId      String?  @map("opportunity_id") @db.VarChar(26)
+  name               String   @db.VarChar(255)
+  clientName         String   @map("client_name") @db.VarChar(255)
+  workOrderRef       String?  @map("work_order_ref") @db.VarChar(128)
+  contractValuePaise BigInt   @map("contract_value_paise")
+  startDate          DateTime @map("start_date") @db.Date
+  endDate            DateTime @map("end_date") @db.Date
+  sponsorUserId      String?  @map("sponsor_user_id") @db.VarChar(26)
+  projectManagerId   String   @map("project_manager_id") @db.VarChar(26)
+  status             String   @default("DRAFT") @db.VarChar(32) // DRAFT | ACTIVE | ON_HOLD | CLOSED
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  businessUnit     BusinessUnit      @relation(fields: [businessUnitId], references: [id])
+  opportunity      Opportunity?      @relation(fields: [opportunityId], references: [id])
+  tasks            Task[]
+  expenseSheets    ExpenseSheet[]
+  materialRequests MaterialRequest[]
+
+  @@index([businessUnitId, status])
+  @@map("project")
+}
+
+model Task {
+  id          String     @id @db.VarChar(26)
+  projectId   String     @map("project_id") @db.VarChar(26)
+  parentId    String?    @map("parent_id") @db.VarChar(26)
+  title       String     @db.VarChar(255)
+  description String?    @db.Text
+  status      TaskStatus @default(BACKLOG)
+  ownerId     String?    @map("owner_id") @db.VarChar(26)
+  estimateHours Decimal? @map("estimate_hours") @db.Decimal(8, 2)
+  actualHours Decimal?   @map("actual_hours") @db.Decimal(8, 2)
+  startDate   DateTime?  @map("start_date") @db.Date
+  endDate     DateTime?  @map("end_date") @db.Date
+  milestoneId String?    @map("milestone_id") @db.VarChar(26)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project Project @relation(fields: [projectId], references: [id])
+  parent  Task?   @relation("TaskTree", fields: [parentId], references: [id])
+  children Task[] @relation("TaskTree")
+
+  @@index([projectId, status])
+  @@index([ownerId, status])
+  @@map("task")
+}
+
+// TODO(R4-R5): Milestone, WbsNode, TaskEffortLog, ResourceAllocation,
+//              Budget, BudgetLine, Commitment, InflowPlan, CashFlowPeriod,
+//              PbgRecord, RetentionRecord, Risk, Issue
+
+// ==========================================================================
+// Module 4 — Expense Management (stub; fill in per docs/modules/04-expense-management.md)
+// ==========================================================================
+
+model ExpenseSheet {
+  id             String             @id @db.VarChar(26)
+  businessUnitId String             @map("business_unit_id") @db.VarChar(26)
+  sheetType      ExpenseSheetType   @map("sheet_type")
+  status         ExpenseSheetStatus @default(DRAFT)
+  claimantUserId String             @map("claimant_user_id") @db.VarChar(26)
+
+  // Cost context - exactly one of these will be set based on sheetType
+  opportunityId String? @map("opportunity_id") @db.VarChar(26)
+  projectId     String? @map("project_id") @db.VarChar(26)
+  costCentre    String? @map("cost_centre") @db.VarChar(32)
+
+  periodFrom   DateTime @map("period_from") @db.Date
+  periodTo     DateTime @map("period_to") @db.Date
+  totalPaise   BigInt   @default(0) @map("total_paise")
+  currentApprovalStep Int @default(0) @map("current_approval_step")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  businessUnit BusinessUnit    @relation(fields: [businessUnitId], references: [id])
+  project      Project?        @relation(fields: [projectId], references: [id])
+  lines        ExpenseLine[]
+  events       ExpenseSheetEvent[]
+
+  @@index([businessUnitId, status])
+  @@index([claimantUserId, status])
+  @@index([projectId])
+  @@map("expense_sheet")
+}
+
+model ExpenseLine {
+  id           String   @id @db.VarChar(26)
+  sheetId      String   @map("sheet_id") @db.VarChar(26)
+  expenseDate  DateTime @map("expense_date") @db.Date
+  categoryId   String   @map("category_id") @db.VarChar(26)
+  vendorName   String?  @map("vendor_name") @db.VarChar(255)
+  description  String?  @db.Text
+  amountPaise  BigInt   @map("amount_paise")
+  gstPaise     BigInt   @default(0) @map("gst_paise")
+  paymentMode  String   @map("payment_mode") @db.VarChar(32)
+  billUri      String?  @map("bill_uri") @db.VarChar(512)
+  reimbursable Boolean  @default(true)
+  policyExceptionFlag Boolean @default(false) @map("policy_exception_flag")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  sheet ExpenseSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId])
+  @@map("expense_line")
+}
+
+model ExpenseCategory {
+  id                    String   @id @db.VarChar(26)
+  name                  String   @unique @db.VarChar(128)
+  capPaise              BigInt?  @map("cap_paise")
+  reimbursable          Boolean  @default(true)
+  gstInputCreditEligible Boolean @default(false) @map("gst_input_credit_eligible")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@map("expense_category")
+}
+
+model ExpenseSheetEvent {
+  id         String             @id @db.VarChar(26)
+  sheetId    String             @map("sheet_id") @db.VarChar(26)
+  fromStatus ExpenseSheetStatus @map("from_status")
+  toStatus   ExpenseSheetStatus @map("to_status")
+  actorUserId String            @map("actor_user_id") @db.VarChar(26)
+  actorRole  String             @map("actor_role") @db.VarChar(32)
+  comment    String?            @db.Text
+  occurredAt DateTime           @default(now()) @map("occurred_at")
+
+  sheet ExpenseSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId, occurredAt])
+  @@map("expense_sheet_event")
+}
+
+// TODO(R6): ApprovalStep, Payment, PolicyRule, PolicyException
+
+// ==========================================================================
+// Module 5 — Material & Procurement (stub; fill in per docs/modules/05-material-procurement.md)
+// ==========================================================================
+
+model Item {
+  id              String   @id @db.VarChar(26)
+  sku             String   @unique @db.VarChar(64)
+  description     String   @db.VarChar(512)
+  uom             String   @db.VarChar(16)
+  category        String?  @db.VarChar(128)
+  hsn             String?  @db.VarChar(16)
+  specifications  Json?
+  lastPurchasedRatePaise BigInt? @map("last_purchased_rate_paise")
+  makeModel       String?  @map("make_model") @db.VarChar(128)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@map("item")
+}
+
+model Vendor {
+  id         String  @id @db.VarChar(26)
+  name       String  @db.VarChar(255)
+  gstin      String? @db.VarChar(16)
+  pan        String? @db.VarChar(16)
+  category   String? @db.VarChar(128)
+  email      String? @db.VarChar(255)
+  phone      String? @db.VarChar(32)
+  bankAccountName String? @map("bank_account_name") @db.VarChar(255)
+  bankAccountNo   String? @map("bank_account_no") @db.VarChar(64)   // encrypted in prod
+  bankIfsc        String? @map("bank_ifsc") @db.VarChar(16)
+  status     String  @default("ACTIVE") @db.VarChar(16)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  @@index([gstin])
+  @@map("vendor")
+}
+
+model MaterialRequest {
+  id              String                 @id @db.VarChar(26)
+  businessUnitId  String                 @map("business_unit_id") @db.VarChar(26)
+  projectId       String                 @map("project_id") @db.VarChar(26)
+  mrNo            String                 @unique @map("mr_no") @db.VarChar(32)
+  requesterUserId String                 @map("requester_user_id") @db.VarChar(26)
+  priority        Priority               @default(NORMAL)
+  requiredBy      DateTime               @map("required_by") @db.Date
+  justification   String?                @db.Text
+  status          MaterialRequestStatus  @default(DRAFT)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  businessUnit BusinessUnit          @relation(fields: [businessUnitId], references: [id])
+  project      Project               @relation(fields: [projectId], references: [id])
+  lines        MaterialRequestLine[]
+
+  @@index([projectId, status])
+  @@index([businessUnitId, createdAt])
+  @@map("material_request")
+}
+
+model MaterialRequestLine {
+  id           String  @id @db.VarChar(26)
+  mrId         String  @map("mr_id") @db.VarChar(26)
+  itemId       String  @map("item_id") @db.VarChar(26)
+  qtyRequested Decimal @map("qty_requested") @db.Decimal(18, 4)
+  qtyApproved  Decimal? @map("qty_approved") @db.Decimal(18, 4)
+  qtyFulfilled Decimal @default(0) @map("qty_fulfilled") @db.Decimal(18, 4)
+  remarks      String? @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  mr MaterialRequest @relation(fields: [mrId], references: [id], onDelete: Cascade)
+
+  @@index([mrId])
+  @@index([itemId])
+  @@map("material_request_line")
+}
+
+// TODO(R7): Indent, Rfq, Quotation, PurchaseOrder, PoLine, Grn, GrnLine,
+//           MaterialIssue, MaterialIssueLine, MaterialReturn,
+//           StoreLocation, StockLedgerEntry, VendorPerformanceSnapshot
+
+// ==========================================================================
+// Cross-cutting
+// ==========================================================================
+
+model AuditLog {
+  id            String   @id @db.VarChar(26)
+  actorUserId   String   @map("actor_user_id") @db.VarChar(26)
+  actorRole     String   @map("actor_role") @db.VarChar(32)
+  resourceType  String   @map("resource_type") @db.VarChar(64)
+  resourceId    String   @map("resource_id") @db.VarChar(26)
+  action        String   @db.VarChar(32) // CREATE | UPDATE | DELETE | SUBMIT | APPROVE | ...
+  before        Json?
+  after         Json?
+  correlationId String?  @map("correlation_id") @db.VarChar(64)
+  ipAddress     String?  @map("ip_address") @db.VarChar(45)
+  userAgent     String?  @map("user_agent") @db.VarChar(512)
+  occurredAt    DateTime @default(now()) @map("occurred_at")
+
+  @@index([resourceType, resourceId, occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@map("audit_log")
+}
+
+model OutboxEvent {
+  id            String    @id @db.VarChar(26)
+  aggregateType String    @map("aggregate_type") @db.VarChar(64)
+  aggregateId   String    @map("aggregate_id") @db.VarChar(26)
+  eventType     String    @map("event_type") @db.VarChar(128)
+  payload       Json
+  occurredAt    DateTime  @default(now()) @map("occurred_at")
+  publishedAt   DateTime? @map("published_at")
+
+  @@index([publishedAt, occurredAt])
+  @@map("outbox_event")
+}
+
+model Attachment {
+  id           String  @id @db.VarChar(26)
+  resourceType String  @map("resource_type") @db.VarChar(64)
+  resourceId   String  @map("resource_id") @db.VarChar(26)
+  fileName     String  @map("file_name") @db.VarChar(255)
+  mimeType     String  @map("mime_type") @db.VarChar(128)
+  sizeBytes    Int     @map("size_bytes")
+  s3Key        String  @unique @map("s3_key") @db.VarChar(512)
+  sha256       String  @db.VarChar(64)
+  uploadedBy   String  @map("uploaded_by") @db.VarChar(26)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@index([resourceType, resourceId])
+  @@map("attachment")
+}
+
+// ==========================================================================
+// Activities — cross-cutting Event/Task module
+// ==========================================================================
+
+model Activity {
+  id            String   @id @db.VarChar(26)
+  activityType  String   @map("activity_type") @db.VarChar(16) // EVENT, TASK
+  subject       String   @db.VarChar(255)
+  description   String?  @db.Text
+  categoryCode  String   @map("category_code") @db.VarChar(64) // from lookup list "activity_category"
+  userId        String   @map("user_id") @db.VarChar(26) // owner / performer
+
+  // Event fields (null for tasks)
+  startDateTime DateTime? @map("start_date_time") @db.DateTime(3)
+  endDateTime   DateTime? @map("end_date_time") @db.DateTime(3)
+  isAllDay      Boolean   @default(false) @map("is_all_day")
+
+  // Task fields (null for events)
+  dueDateTime   DateTime? @map("due_date_time") @db.DateTime(3)
+  taskStatus    String?   @map("task_status") @db.VarChar(32) // OPEN, OVERDUE, CLOSED
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  user         User                @relation("ActivityUser", fields: [userId], references: [id])
+  associations ActivityAssociation[]
+  contacts     ActivityContact[]
+
+  @@index([activityType, deletedAt])
+  @@index([userId, activityType])
+  @@index([startDateTime])
+  @@index([dueDateTime, taskStatus])
+  @@map("activity")
+}
+
+model ActivityAssociation {
+  id         String @id @db.VarChar(26)
+  activityId String @map("activity_id") @db.VarChar(26)
+  entityType String @map("entity_type") @db.VarChar(32) // OPPORTUNITY, LEAD, ACCOUNT, CONTACT, INFLUENCER, PROJECT
+  entityId   String @map("entity_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@unique([activityId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("activity_association")
+}
+
+model ActivityContact {
+  id         String @id @db.VarChar(26)
+  activityId String @map("activity_id") @db.VarChar(26)
+  contactId  String @map("contact_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id])
+
+  @@unique([activityId, contactId])
+  @@index([contactId])
+  @@map("activity_contact")
+}
+
+// ==========================================================================
+// Travel Plans — cross-cutting travel management
+// ==========================================================================
+
+model TravelPlan {
+  id                String   @id @db.VarChar(26)
+  title             String   @db.VarChar(255)
+  purpose           String   @db.VarChar(64) // from lookup "travel_purpose"
+  status            String   @default("DRAFT") @db.VarChar(32) // DRAFT, SUBMITTED, APPROVED, REJECTED, BOOKING, IN_PROGRESS, EXPENSE_SUBMITTED, COMPLETED
+  startDate         DateTime @map("start_date") @db.Date
+  endDate           DateTime @map("end_date") @db.Date
+  leadTravellerId   String   @map("lead_traveller_id") @db.VarChar(26)
+  businessUnitId    String?  @map("business_unit_id") @db.VarChar(26)
+  advanceAmountPaise BigInt  @default(0) @map("advance_amount_paise")
+  advanceStatus     String   @default("NOT_REQUESTED") @map("advance_status") @db.VarChar(32) // NOT_REQUESTED, REQUESTED, APPROVED, DISBURSED
+  reimbursementStatus    String @default("PENDING") @map("reimbursement_status") @db.VarChar(32) // PENDING, SUBMITTED, APPROVED, PAID
+  reimbursementPaidPaise BigInt @default(0) @map("reimbursement_paid_paise")
+  reimbursementRef       String? @map("reimbursement_ref") @db.VarChar(255)
+  notes             String?  @db.Text
+  rejectionReason   String?  @map("rejection_reason") @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  leadTraveller  User                    @relation("TravelLeader", fields: [leadTravellerId], references: [id])
+  businessUnit   BusinessUnit?           @relation(fields: [businessUnitId], references: [id])
+  travellers     TravelPlanTraveller[]
+  associations   TravelPlanAssociation[]
+  tickets        TravelPlanTicket[]
+  hotels         TravelPlanHotel[]
+  expenses       TravelPlanExpense[]
+
+  @@index([status, deletedAt])
+  @@index([leadTravellerId])
+  @@index([startDate])
+  @@map("travel_plan")
+}
+
+model TravelPlanTraveller {
+  id           String @id @db.VarChar(26)
+  travelPlanId String @map("travel_plan_id") @db.VarChar(26)
+  userId       String @map("user_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  travelPlan TravelPlan @relation(fields: [travelPlanId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id])
+
+  @@unique([travelPlanId, userId])
+  @@index([userId])
+  @@map("travel_plan_traveller")
+}
+
+model TravelPlanAssociation {
+  id           String @id @db.VarChar(26)
+  travelPlanId String @map("travel_plan_id") @db.VarChar(26)
+  entityType   String @map("entity_type") @db.VarChar(32)
+  entityId     String @map("entity_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  travelPlan TravelPlan @relation(fields: [travelPlanId], references: [id], onDelete: Cascade)
+
+  @@unique([travelPlanId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("travel_plan_association")
+}
+
+model TravelPlanTicket {
+  id           String   @id @db.VarChar(26)
+  travelPlanId String   @map("travel_plan_id") @db.VarChar(26)
+  ticketType   String   @map("ticket_type") @db.VarChar(32) // FLIGHT, TRAIN, BUS, CAB, OTHER
+  fromLocation String   @map("from_location") @db.VarChar(255)
+  toLocation   String   @map("to_location") @db.VarChar(255)
+  travelDate   DateTime @map("travel_date") @db.Date
+  returnDate   DateTime? @map("return_date") @db.Date
+  bookingRef      String?  @map("booking_ref") @db.VarChar(128)
+  amountPaise     BigInt   @map("amount_paise")
+  notes           String?  @db.VarChar(500)
+  attachmentName  String?  @map("attachment_name") @db.VarChar(255)
+  attachmentPath  String?  @map("attachment_path") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  travelPlan TravelPlan @relation(fields: [travelPlanId], references: [id], onDelete: Cascade)
+
+  @@index([travelPlanId])
+  @@map("travel_plan_ticket")
+}
+
+model TravelPlanHotel {
+  id              String   @id @db.VarChar(26)
+  travelPlanId    String   @map("travel_plan_id") @db.VarChar(26)
+  hotelName       String   @map("hotel_name") @db.VarChar(255)
+  location        String   @db.VarChar(255)
+  checkIn         DateTime @map("check_in") @db.Date
+  checkOut        DateTime @map("check_out") @db.Date
+  bookingRef      String?  @map("booking_ref") @db.VarChar(128)
+  amountPaise     BigInt   @map("amount_paise")
+  notes           String?  @db.VarChar(500)
+  attachmentName  String?  @map("attachment_name") @db.VarChar(255)
+  attachmentPath  String?  @map("attachment_path") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  travelPlan TravelPlan @relation(fields: [travelPlanId], references: [id], onDelete: Cascade)
+
+  @@index([travelPlanId])
+  @@map("travel_plan_hotel")
+}
+
+model TravelPlanExpense {
+  id           String   @id @db.VarChar(26)
+  travelPlanId String   @map("travel_plan_id") @db.VarChar(26)
+  category     String   @db.VarChar(64) // TICKET, HOTEL, FOOD, LOCAL_TRANSPORT, COMMUNICATION, OTHER
+  expenseDate  DateTime @map("expense_date") @db.Date
+  description  String   @db.VarChar(500)
+  amountPaise  BigInt   @map("amount_paise")
+  receiptRef   String?  @map("receipt_ref") @db.VarChar(255)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  travelPlan TravelPlan @relation(fields: [travelPlanId], references: [id], onDelete: Cascade)
+
+  @@index([travelPlanId])
+  @@map("travel_plan_expense")
+}
+
+// ==========================================================================
+// Password Manager — secure credential storage
+// ==========================================================================
+
+model PasswordEntry {
+  id              String  @id @db.VarChar(26)
+  ownerUserId     String  @map("owner_user_id") @db.VarChar(26)
+  portal          String  @db.VarChar(255) // Portal name or URL
+  location        String? @db.VarChar(255) // Optional: specific page or section
+  username        String  @db.VarChar(255)
+  encryptedPass   String  @map("encrypted_pass") @db.Text // AES-256-GCM encrypted
+  passIv          String  @map("pass_iv") @db.VarChar(32) // Initialization vector (hex)
+  passTag         String  @map("pass_tag") @db.VarChar(32) // Auth tag (hex)
+  notes           String? @db.Text
+
+  // Visibility: PERSONAL = only owner, ROLE = shared with a role, ALL = everyone
+  visibility      String  @default("PERSONAL") @db.VarChar(16) // PERSONAL, ROLE, ALL
+  sharedRoleId    String? @map("shared_role_id") @db.VarChar(26) // FK to Role when visibility=ROLE
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  owner           User    @relation("PasswordOwner", fields: [ownerUserId], references: [id])
+  sharedRole      Role?   @relation(fields: [sharedRoleId], references: [id])
+  securityQuestions PasswordSecurityQuestion[]
+
+  @@index([ownerUserId, deletedAt])
+  @@index([visibility, deletedAt])
+  @@index([sharedRoleId])
+  @@map("password_entry")
+}
+
+model PasswordSecurityQuestion {
+  id              String @id @db.VarChar(26)
+  passwordEntryId String @map("password_entry_id") @db.VarChar(26)
+  question        String @db.VarChar(500)
+  encryptedAnswer String @map("encrypted_answer") @db.Text
+  answerIv        String @map("answer_iv") @db.VarChar(32)
+  answerTag       String @map("answer_tag") @db.VarChar(32)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  passwordEntry PasswordEntry @relation(fields: [passwordEntryId], references: [id], onDelete: Cascade)
+
+  @@index([passwordEntryId])
+  @@map("password_security_question")
+}

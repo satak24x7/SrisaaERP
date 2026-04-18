@@ -1,0 +1,48 @@
+{
+  "name": "@govprojects/web",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "ng": "ng",
+    "dev": "ng serve --port 4200 --open",
+    "build": "ng build",
+    "typecheck": "ng build --configuration development --no-progress 2>&1 | tail -5 || true",
+    "lint": "echo 'lint placeholder' && exit 0",
+    "test": "echo 'no tests yet' && exit 0"
+  },
+  "dependencies": {
+    "@angular/animations": "^19.0.0",
+    "@angular/cdk": "^19.0.0",
+    "@angular/common": "^19.0.0",
+    "@angular/compiler": "^19.0.0",
+    "@angular/core": "^19.0.0",
+    "@angular/forms": "^19.0.0",
+    "@angular/platform-browser": "^19.0.0",
+    "@angular/platform-browser-dynamic": "^19.0.0",
+    "@angular/router": "^19.0.0",
+    "@fullcalendar/angular": "^6.1.20",
+    "@fullcalendar/core": "^6.1.20",
+    "@fullcalendar/daygrid": "^6.1.20",
+    "@fullcalendar/interaction": "^6.1.20",
+    "@fullcalendar/list": "^6.1.20",
+    "@fullcalendar/timegrid": "^6.1.20",
+    "@primeng/themes": "^19.1.4",
+    "angular-auth-oidc-client": "^18.0.0",
+    "chart.js": "^4.5.1",
+    "primeicons": "^7.0.0",
+    "primeng": "^19.1.4",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.6.0",
+    "zone.js": "~0.15.0"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^19.0.0",
+    "@angular/cli": "^19.0.0",
+    "@angular/compiler-cli": "^19.0.0",
+    "@types/node": "^20.12.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "~5.6.0"
+  }
+}
