@@ -93,7 +93,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
         <ng-template pTemplate="header">
           <tr>
             <th style="width:40px"></th>
-            <th>Subject</th><th>Type</th><th>Category</th><th>Date / Time</th><th>Status</th><th>Linked To</th><th>Owner</th><th style="width:100px">Actions</th>
+            <th>Subject</th><th>Type</th><th>Date / Time</th><th>Status</th><th>Linked To</th><th>Category</th><th>Owner</th><th style="width:100px">Actions</th>
           </tr>
         </ng-template>
         <ng-template pTemplate="body" let-a>
@@ -101,7 +101,6 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
             <td><i [class]="typeIcon(a.activityType)" class="text-gray-500"></i></td>
             <td class="font-medium">{{ a.subject }}</td>
             <td><p-tag [value]="a.activityType" [severity]="a.activityType === 'EVENT' ? 'info' : 'warn'" /></td>
-            <td>{{ a.categoryCode }}</td>
             <td>
               @if (a.activityType === 'EVENT') {
                 {{ a.startDateTime | date:'short' }}
@@ -125,6 +124,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
                 @if (a.associations.length === 0) { <span class="text-xs text-gray-400">-</span> }
               </div>
             </td>
+            <td>{{ resolveCategoryLabel(a.categoryCode) }}</td>
             <td>{{ a.userName || '-' }}</td>
             <td>
               <div class="flex gap-1">
@@ -311,6 +311,9 @@ export class ActivityListComponent implements OnInit {
     this.http.get<{ data: Ref[] }>(`${environment.apiBaseUrl}/influencers?limit=200`).subscribe({
       next: (r) => this.influencerOptions.set(r.data),
     });
+    this.http.get<{ data: Array<{ id: string; name: string }> }>(`${environment.apiBaseUrl}/projects?limit=200`).subscribe({
+      next: (r) => this.projectOptions.set(r.data.map((p) => ({ id: p.id, name: p.name }))),
+    });
   }
 
   loadActivities(): void {
@@ -434,11 +437,18 @@ export class ActivityListComponent implements OnInit {
       case 'ACCOUNT': return this.accountOptions();
       case 'CONTACT': return this.contactOptions();
       case 'INFLUENCER': return this.influencerOptions();
+      case 'PROJECT': return this.projectOptions();
       default: return [];
     }
   }
 
   entityLabel(type: string): string { return ENTITY_TYPE_LABELS[type] ?? type; }
+
+  resolveCategoryLabel(code: string): string {
+    if (!code) return '-';
+    const match = this.categoryOptions().find((o) => o.value === code);
+    return match?.label ?? code;
+  }
 
   typeIcon(type: string): string {
     return type === 'EVENT' ? 'pi pi-calendar' : 'pi pi-check-square';

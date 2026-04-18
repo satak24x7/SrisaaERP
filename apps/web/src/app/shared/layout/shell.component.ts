@@ -153,9 +153,12 @@ export class ShellComponent implements OnInit {
     {
       label: 'Projects',
       icon: 'pi pi-folder',
-      expanded: true,
+      expanded: false,
       children: [
-        { label: 'All Projects', icon: 'pi pi-list', route: '/projects' },
+        { label: 'Dashboard', icon: 'pi pi-chart-bar', route: '/projects/dashboard' },
+        { label: 'Kanban', icon: 'pi pi-th-large', route: '/projects/kanban' },
+        { label: 'Cash Flow', icon: 'pi pi-money-bill', route: '/projects/cash-flow' },
+        { label: 'All Projects', icon: 'pi pi-list', route: '/projects/list' },
       ],
     },
     { label: 'Expenses', icon: 'pi pi-wallet', route: '/expenses' },
@@ -164,7 +167,7 @@ export class ShellComponent implements OnInit {
     {
       label: 'System',
       icon: 'pi pi-cog',
-      expanded: true,
+      expanded: false,
       children: [
         { label: 'Company Profile', icon: 'pi pi-briefcase', route: '/admin/company-profile' },
         { label: 'Statutory Registrations', icon: 'pi pi-id-card', route: '/admin/statutory-registrations' },
@@ -189,7 +192,13 @@ export class ShellComponent implements OnInit {
   }
 
   toggleGroup(group: NavGroup): void {
-    group.expanded = !group.expanded;
+    const opening = !group.expanded;
+    // Collapse all groups first
+    for (const item of this.navItems) {
+      if (isGroup(item)) item.expanded = false;
+    }
+    // Open the clicked one if it was closed
+    if (opening) group.expanded = true;
   }
 
   logout(): void {

@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ReactiveFormsModule, FormsModule, FormBuilder, Validators } from '@angular/forms';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import { CdkDragDrop, DragDropModule, moveItemInArray } from '@angular/cdk/drag-drop';
 import { ButtonModule } from 'primeng/button';
 import { InputTextModule } from 'primeng/inputtext';
 import { SelectModule } from 'primeng/select';
@@ -25,21 +26,21 @@ import { KanbanBoardComponent } from './kanban-board.component';
 interface Ref { id: string; name: string; }
 interface LookupItem { label: string; value: string; isActive?: boolean; }
 
-interface MilestoneRow { id: string; name: string; description: string | null; deliverable: string | null; plannedDate: string; actualDate: string | null; percentOfContract: number | null; invoiceAmountPaise: number | null; status: string; sortOrder: number; }
+interface ProjectDocumentRow { id: string; name: string; fileName: string; mimeType: string; fileSize: number; sortOrder: number; createdAt: string; }
 
-interface TaskRow { id: string; title: string; priority: string; kanbanColumn: string; ownerName: string | null; milestoneName: string | null; estimateHours: number | null; actualHours: number | null; startDate: string | null; endDate: string | null; status: string; }
+interface DeliverableRow { id: string; milestoneId: string; name: string; description: string | null; status: string; completedAt: string | null; sortOrder: number; }
+
+interface MilestoneRow { id: string; name: string; description: string | null; plannedDate: string; originalPlannedDate: string | null; actualDate: string | null; percentOfContract: number | null; invoiceAmountPaise: number | null; status: string; sortOrder: number; deliverables: DeliverableRow[]; }
+
+interface TaskRow { id: string; title: string; priority: string; kanbanColumn: string; ownerId: string | null; ownerName: string | null; milestoneId: string | null; milestoneName: string | null; estimateHours: number | null; actualHours: number | null; startDate: string | null; endDate: string | null; status: string; }
 
 interface BudgetLineRow { id: string; category: string; description: string | null; estimatedPaise: number; committedPaise: number; actualPaise: number; }
-interface BudgetData { id: string; totalEstimatedPaise: number; notes: string | null; lines: BudgetLineRow[]; totals: { estimated: number; committed: number; actual: number; variance: number }; }
-
-interface InflowItem { id: string; description: string; milestoneId: string | null; invoiceDate: string; amountPaise: number; gstPct: number; retentionPct: number; status: string; }
-
-interface CashFlowRow { id: string; periodLabel: string; periodStart: string; periodEnd: string; openingBalancePaise: number; billedPaise: number; receivedPaise: number; outflowPaise: number; closingBalancePaise: number; }
+interface BudgetData { id: string; totalEstimatedPaise: number; notes: string | null; lines: BudgetLineRow[]; totals: { totalEstimated: number; totalCommitted: number; totalActual: number; variance: number }; }
 
 interface PbgRow { id: string; type: string; description: string; amountPaise: number; bankName: string | null; bgNumber: string | null; issuedDate: string | null; expiryDate: string | null; status: string; releaseDate: string | null; notes: string | null; }
 
-interface RiskRow { id: string; title: string; description: string | null; probability: string; impact: string; mitigation: string | null; status: string; ownerName: string | null; }
-interface IssueRow { id: string; title: string; description: string | null; severity: string; resolution: string | null; status: string; ownerName: string | null; }
+interface RiskRow { id: string; title: string; description: string | null; probability: string; impact: string; mitigation: string | null; status: string; ownerId: string | null; ownerName: string | null; }
+interface IssueRow { id: string; title: string; description: string | null; severity: string; resolution: string | null; status: string; ownerId: string | null; ownerName: string | null; }
 
 interface HealthData { schedule: { total: number; completed: number; overdue: number; rag: string }; budget: { totalEstimated: number; totalActual: number; totalCommitted: number; utilization: number; rag: string }; scope: { totalTasks: number; completed: number; inProgress: number; blocked: number; completion: number; rag: string }; overall: string; }
 
@@ -52,8 +53,8 @@ interface Project {
   opportunityId: string | null; opportunityTitle: string | null;
   sponsorUserId: string | null; projectManagerId: string;
   projectManagerName: string | null; status: string;
-  milestoneSummary: { total: number; completed: number };
-  taskSummary: Record<string, number>;
+  milestones: { total: number; byStatus: Record<string, number> };
+  tasks: { total: number; byColumn: Record<string, number> };
   createdAt: string; updatedAt: string;
 }
 
@@ -94,12 +95,6 @@ const BUDGET_CATEGORIES = [
   { label: 'Travel', value: 'TRAVEL' },
   { label: 'Overheads', value: 'OVERHEADS' },
   { label: 'Other', value: 'OTHER' },
-];
-
-const INFLOW_STATUSES = [
-  { label: 'Planned', value: 'PLANNED' },
-  { label: 'Invoiced', value: 'INVOICED' },
-  { label: 'Received', value: 'RECEIVED' },
 ];
 
 const PBG_TYPES = [
@@ -161,7 +156,7 @@ function parseDate(str: string): Date {
 @Component({
   selector: 'app-project-detail',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule, ButtonModule, InputTextModule, SelectModule, MultiSelectModule, InputNumberModule, TagModule, DialogModule, ToastModule, ConfirmDialogModule, TabsModule, TableModule, DatePickerModule, TextareaModule, ChartModule, ActivityPanelComponent, KanbanBoardComponent],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, DragDropModule, ButtonModule, InputTextModule, SelectModule, MultiSelectModule, InputNumberModule, TagModule, DialogModule, ToastModule, ConfirmDialogModule, TabsModule, TableModule, DatePickerModule, TextareaModule, ChartModule, ActivityPanelComponent, KanbanBoardComponent],
   providers: [MessageService, ConfirmationService],
   template: `
     <p-toast /><p-confirmDialog />
@@ -295,18 +290,19 @@ function parseDate(str: string): Date {
       @if (!isNew && project()) {
         <p-tabs [value]="0">
           <p-tablist>
-            <p-tab [value]="0">Overview</p-tab>
-            <p-tab [value]="1">Milestones</p-tab>
-            <p-tab [value]="2">Tasks</p-tab>
-            <p-tab [value]="3">Budget</p-tab>
-            <p-tab [value]="4">Cash Flow</p-tab>
-            <p-tab [value]="5">PBG &amp; Retention</p-tab>
-            <p-tab [value]="6">Risks &amp; Issues</p-tab>
-            <p-tab [value]="7">Health</p-tab>
+            <p-tab [value]="0">Health</p-tab>
+            <p-tab [value]="1">Overview</p-tab>
+            <p-tab [value]="2">Activities</p-tab>
+            <p-tab [value]="3">Work Items</p-tab>
+            <p-tab [value]="4">Milestones</p-tab>
+            <p-tab [value]="5">Budget</p-tab>
+            <p-tab [value]="6">Bank Guarantees</p-tab>
+            <p-tab [value]="7">Risks &amp; Issues</p-tab>
+            <p-tab [value]="8">Documents</p-tab>
           </p-tablist>
           <p-tabpanels>
-            <!-- Tab 0: Overview -->
-            <p-tabpanel [value]="0">
+            <!-- Tab 1: Overview -->
+            <p-tabpanel [value]="1">
               <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 mt-4">
                 <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
                   <div class="text-xs text-blue-600 font-medium">Contract Value</div>
@@ -314,10 +310,10 @@ function parseDate(str: string): Date {
                 </div>
                 <div class="bg-green-50 rounded-lg p-4 border border-green-200">
                   <div class="text-xs text-green-600 font-medium">Milestones</div>
-                  <div class="text-xl font-bold text-green-800">{{ project()!.milestoneSummary.completed }} / {{ project()!.milestoneSummary.total }}</div>
+                  <div class="text-xl font-bold text-green-800">{{ project()!.milestones.byStatus['COMPLETED'] || 0 }} / {{ project()!.milestones.total }}</div>
                 </div>
                 <div class="bg-purple-50 rounded-lg p-4 border border-purple-200">
-                  <div class="text-xs text-purple-600 font-medium">Tasks</div>
+                  <div class="text-xs text-purple-600 font-medium">Work Items</div>
                   <div class="text-xl font-bold text-purple-800">
                     @for (entry of taskSummaryEntries(); track entry[0]) {
                       <span class="text-sm">{{ entry[0] }}: {{ entry[1] }} </span>
@@ -335,22 +331,71 @@ function parseDate(str: string): Date {
               <app-activity-panel entityType="PROJECT" [entityId]="project()!.id" />
             </p-tabpanel>
 
-            <!-- Tab 1: Milestones -->
-            <p-tabpanel [value]="1">
+            <!-- Tab 8: Documents -->
+            <p-tabpanel [value]="8">
+              <div class="mt-4">
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-lg font-semibold text-gray-700">Project Documents</h3>
+                  <p-button label="Add Document" icon="pi pi-plus" size="small" (onClick)="openDocDialog()" />
+                </div>
+                @if (documents().length === 0) {
+                  <div class="text-center py-8 text-gray-400">
+                    <i class="pi pi-inbox text-4xl mb-2"></i>
+                    <p>No documents uploaded yet</p>
+                  </div>
+                } @else {
+                  <div cdkDropListGroup class="grid grid-cols-3 md:grid-cols-6 lg:grid-cols-12 gap-2"
+                       cdkDropList [cdkDropListData]="documents()" (cdkDropListDropped)="onDocDrop($event)"
+                       cdkDropListOrientation="mixed">
+                    @for (doc of documents(); track doc.id) {
+                      <div cdkDrag class="bg-gray-50 rounded border border-gray-200 px-2 py-3 flex flex-col items-center text-center
+                                  hover:shadow hover:border-gray-300 transition-shadow cursor-grab active:cursor-grabbing">
+                        <i [class]="docTypeIcon(doc.mimeType) + ' text-xl mb-1'"
+                           [style.color]="docTypeColor(doc.mimeType)"></i>
+                        <h4 class="text-xs font-medium text-gray-800 line-clamp-2 w-full leading-tight">{{ doc.name }}</h4>
+                        <p class="text-[10px] text-gray-400 mt-0.5">{{ formatSize(doc.fileSize) }}</p>
+                        <div class="flex gap-0 mt-1.5" (click)="$event.stopPropagation()">
+                          <p-button icon="pi pi-eye" severity="info" [text]="true" size="small"
+                                    [style]="{'padding':'0.15rem'}" (onClick)="viewDocument(doc)" />
+                          <p-button icon="pi pi-pencil" severity="warn" [text]="true" size="small"
+                                    [style]="{'padding':'0.15rem'}" (onClick)="openDocDialog(doc)" />
+                          <p-button icon="pi pi-trash" severity="danger" [text]="true" size="small"
+                                    [style]="{'padding':'0.15rem'}" (onClick)="deleteDocument(doc)" />
+                        </div>
+                        <div *cdkDragPlaceholder class="bg-blue-100 border-2 border-dashed border-blue-300 rounded w-full h-full min-h-[80px]"></div>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </p-tabpanel>
+
+            <!-- Tab 4: Milestones -->
+            <p-tabpanel [value]="4">
               <div class="flex justify-end mb-4 mt-4">
                 <p-button label="Add Milestone" icon="pi pi-plus" size="small" (onClick)="openMilestoneDialog()" />
               </div>
               <p-table [value]="milestones()" styleClass="p-datatable-sm" [rows]="20">
                 <ng-template pTemplate="header">
                   <tr>
-                    <th style="width:50px">#</th><th>Name</th><th>Deliverable</th><th>Planned Date</th><th>Actual Date</th><th>% of Contract</th><th>Invoice Amount</th><th>Status</th><th style="width:100px">Actions</th>
+                    <th style="width:40px"></th><th style="width:50px">#</th><th>Name</th><th>Deliverables</th><th>Original Date</th><th>Planned Date</th><th>Actual Date</th><th>% of Contract</th><th>Invoice Amount</th><th>Status</th><th style="width:100px">Actions</th>
                   </tr>
                 </ng-template>
                 <ng-template pTemplate="body" let-m let-i="rowIndex">
                   <tr>
+                    <td>
+                      <p-button [icon]="expandedMilestoneId === m.id ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" [text]="true" [rounded]="true" size="small" (onClick)="toggleMilestoneExpand(m.id)" />
+                    </td>
                     <td>{{ i + 1 }}</td>
                     <td>{{ m.name }}</td>
-                    <td>{{ m.deliverable || '-' }}</td>
+                    <td>
+                      @if (m.deliverables && m.deliverables.length > 0) {
+                        <span class="text-green-700 font-medium">{{ completedDeliverableCount(m.deliverables) }}</span><span class="text-gray-400">/{{ m.deliverables.length }}</span>
+                      } @else {
+                        <span class="text-gray-400">0</span>
+                      }
+                    </td>
+                    <td>{{ m.originalPlannedDate ? (m.originalPlannedDate | date:'mediumDate') : '-' }}</td>
                     <td>{{ m.plannedDate | date:'mediumDate' }}</td>
                     <td>{{ m.actualDate ? (m.actualDate | date:'mediumDate') : '-' }}</td>
                     <td>{{ m.percentOfContract != null ? m.percentOfContract + '%' : '-' }}</td>
@@ -363,22 +408,65 @@ function parseDate(str: string): Date {
                       </div>
                     </td>
                   </tr>
+                  @if (expandedMilestoneId === m.id) {
+                    <tr>
+                      <td colspan="11" class="!p-0">
+                        <div class="bg-gray-50 border-t border-b border-gray-200 p-4 ml-8">
+                          <div class="flex items-center justify-between mb-3">
+                            <h4 class="text-sm font-semibold text-gray-700">Deliverables</h4>
+                            <p-button label="Add Deliverable" icon="pi pi-plus" size="small" [outlined]="true" (onClick)="openDeliverableDialog(m.id)" />
+                          </div>
+                          @if (!m.deliverables || m.deliverables.length === 0) {
+                            <div class="text-center text-gray-400 py-4 text-sm">No deliverables yet</div>
+                          } @else {
+                            <table class="w-full text-sm">
+                              <thead>
+                                <tr class="text-left text-gray-500 border-b border-gray-200">
+                                  <th class="py-2 px-2" style="width:40px"></th>
+                                  <th class="py-2 px-2">Name</th>
+                                  <th class="py-2 px-2" style="width:120px">Status</th>
+                                  <th class="py-2 px-2" style="width:100px">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                @for (d of m.deliverables; track d.id) {
+                                  <tr class="border-b border-gray-100 hover:bg-gray-100">
+                                    <td class="py-2 px-2">
+                                      <p-button [icon]="d.status === 'COMPLETED' ? 'pi pi-check-circle' : 'pi pi-circle'" [text]="true" [rounded]="true" size="small" [severity]="d.status === 'COMPLETED' ? 'success' : 'secondary'" (onClick)="toggleDeliverableComplete(m.id, d.id)" />
+                                    </td>
+                                    <td class="py-2 px-2" [class.line-through]="d.status === 'COMPLETED'" [class.text-gray-400]="d.status === 'COMPLETED'">{{ d.name }}</td>
+                                    <td class="py-2 px-2"><p-tag [value]="d.status" [severity]="d.status === 'COMPLETED' ? 'success' : 'secondary'" /></td>
+                                    <td class="py-2 px-2">
+                                      <div class="flex gap-1">
+                                        <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openDeliverableDialog(m.id, d)" />
+                                        <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteDeliverable(m.id, d.id)" />
+                                      </div>
+                                    </td>
+                                  </tr>
+                                }
+                              </tbody>
+                            </table>
+                          }
+                        </div>
+                      </td>
+                    </tr>
+                  }
                 </ng-template>
                 <ng-template pTemplate="emptymessage">
-                  <tr><td colspan="9" class="text-center text-gray-400 py-4">No milestones yet</td></tr>
+                  <tr><td colspan="11" class="text-center text-gray-400 py-4">No milestones yet</td></tr>
                 </ng-template>
               </p-table>
             </p-tabpanel>
 
-            <!-- Tab 2: Tasks -->
-            <p-tabpanel [value]="2">
+            <!-- Tab 3: Work Items -->
+            <p-tabpanel [value]="3">
               <div class="flex items-center justify-between mb-4 mt-4">
                 <div class="flex gap-2">
                   <p-button [label]="'Table'" [severity]="taskView === 'table' ? undefined : 'secondary'" [outlined]="taskView !== 'table'" size="small" icon="pi pi-list" (onClick)="taskView='table'" />
                   <p-button [label]="'Kanban'" [severity]="taskView === 'kanban' ? undefined : 'secondary'" [outlined]="taskView !== 'kanban'" size="small" icon="pi pi-th-large" (onClick)="taskView='kanban'" />
                 </div>
                 @if (taskView === 'table') {
-                  <p-button label="Add Task" icon="pi pi-plus" size="small" (onClick)="openTaskDialog()" />
+                  <p-button label="Add Work Item" icon="pi pi-plus" size="small" (onClick)="openTaskDialog()" />
                 }
               </div>
               @if (taskView === 'table') {
@@ -408,7 +496,7 @@ function parseDate(str: string): Date {
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="emptymessage">
-                    <tr><td colspan="10" class="text-center text-gray-400 py-4">No tasks yet</td></tr>
+                    <tr><td colspan="10" class="text-center text-gray-400 py-4">No work items yet</td></tr>
                   </ng-template>
                 </p-table>
               } @else {
@@ -416,8 +504,8 @@ function parseDate(str: string): Date {
               }
             </p-tabpanel>
 
-            <!-- Tab 3: Budget -->
-            <p-tabpanel [value]="3">
+            <!-- Tab 5: Budget -->
+            <p-tabpanel [value]="5">
               <div class="mt-4">
                 @if (!budget()) {
                   <div class="text-center py-8">
@@ -428,15 +516,15 @@ function parseDate(str: string): Date {
                   <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                     <div class="bg-blue-50 rounded-lg p-4 border border-blue-200">
                       <div class="text-xs text-blue-600 font-medium">Estimated</div>
-                      <div class="text-lg font-bold text-blue-800">{{ formatRupees(budget()!.totals.estimated) }}</div>
+                      <div class="text-lg font-bold text-blue-800">{{ formatRupees(budget()!.totals.totalEstimated) }}</div>
                     </div>
                     <div class="bg-yellow-50 rounded-lg p-4 border border-yellow-200">
                       <div class="text-xs text-yellow-600 font-medium">Committed</div>
-                      <div class="text-lg font-bold text-yellow-800">{{ formatRupees(budget()!.totals.committed) }}</div>
+                      <div class="text-lg font-bold text-yellow-800">{{ formatRupees(budget()!.totals.totalCommitted) }}</div>
                     </div>
                     <div class="bg-green-50 rounded-lg p-4 border border-green-200">
                       <div class="text-xs text-green-600 font-medium">Actual</div>
-                      <div class="text-lg font-bold text-green-800">{{ formatRupees(budget()!.totals.actual) }}</div>
+                      <div class="text-lg font-bold text-green-800">{{ formatRupees(budget()!.totals.totalActual) }}</div>
                     </div>
                     <div class="rounded-lg p-4 border" [ngClass]="budget()!.totals.variance >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'">
                       <div class="text-xs font-medium" [ngClass]="budget()!.totals.variance >= 0 ? 'text-green-600' : 'text-red-600'">Variance</div>
@@ -476,80 +564,10 @@ function parseDate(str: string): Date {
               </div>
             </p-tabpanel>
 
-            <!-- Tab 4: Cash Flow -->
-            <p-tabpanel [value]="4">
-              <div class="mt-4">
-                <!-- Inflow Plan -->
-                <div class="mb-6">
-                  <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold text-gray-700">Inflow Plan</h3>
-                    <p-button label="Add Inflow" icon="pi pi-plus" size="small" (onClick)="openInflowDialog()" />
-                  </div>
-                  <p-table [value]="inflowItems()" styleClass="p-datatable-sm" [rows]="20">
-                    <ng-template pTemplate="header">
-                      <tr>
-                        <th>Description</th><th>Invoice Date</th><th class="text-right">Amount</th><th>GST %</th><th>Retention %</th><th>Status</th><th style="width:100px">Actions</th>
-                      </tr>
-                    </ng-template>
-                    <ng-template pTemplate="body" let-item>
-                      <tr>
-                        <td>{{ item.description }}</td>
-                        <td>{{ item.invoiceDate | date:'mediumDate' }}</td>
-                        <td class="text-right">{{ formatRupees(item.amountPaise) }}</td>
-                        <td>{{ item.gstPct }}%</td>
-                        <td>{{ item.retentionPct }}%</td>
-                        <td><p-tag [value]="item.status" [severity]="inflowStatusSeverity(item.status)" /></td>
-                        <td>
-                          <div class="flex gap-1">
-                            <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openInflowDialog(item)" />
-                            <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteInflow(item.id)" />
-                          </div>
-                        </td>
-                      </tr>
-                    </ng-template>
-                    <ng-template pTemplate="emptymessage">
-                      <tr><td colspan="7" class="text-center text-gray-400 py-4">No inflow items yet</td></tr>
-                    </ng-template>
-                  </p-table>
-                </div>
-
-                <!-- Cash Flow Periods -->
-                <div>
-                  <div class="flex items-center justify-between mb-4">
-                    <h3 class="text-lg font-semibold text-gray-700">Cash Flow Periods</h3>
-                    <p-button label="Add Period" icon="pi pi-plus" size="small" (onClick)="openCashFlowDialog()" />
-                  </div>
-                  <p-table [value]="cashFlowRows()" styleClass="p-datatable-sm" [rows]="20">
-                    <ng-template pTemplate="header">
-                      <tr>
-                        <th>Period</th><th class="text-right">Opening</th><th class="text-right">Billed</th><th class="text-right">Received</th><th class="text-right">Outflow</th><th class="text-right">Closing</th><th style="width:80px">Actions</th>
-                      </tr>
-                    </ng-template>
-                    <ng-template pTemplate="body" let-cf>
-                      <tr>
-                        <td>{{ cf.periodLabel }}</td>
-                        <td class="text-right">{{ formatRupees(cf.openingBalancePaise) }}</td>
-                        <td class="text-right">{{ formatRupees(cf.billedPaise) }}</td>
-                        <td class="text-right">{{ formatRupees(cf.receivedPaise) }}</td>
-                        <td class="text-right">{{ formatRupees(cf.outflowPaise) }}</td>
-                        <td class="text-right font-medium">{{ formatRupees(cf.closingBalancePaise) }}</td>
-                        <td>
-                          <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openCashFlowDialog(cf)" />
-                        </td>
-                      </tr>
-                    </ng-template>
-                    <ng-template pTemplate="emptymessage">
-                      <tr><td colspan="7" class="text-center text-gray-400 py-4">No cash flow periods yet</td></tr>
-                    </ng-template>
-                  </p-table>
-                </div>
-              </div>
-            </p-tabpanel>
-
-            <!-- Tab 5: PBG & Retention -->
-            <p-tabpanel [value]="5">
+            <!-- Tab 6: Bank Guarantees -->
+            <p-tabpanel [value]="6">
               <div class="flex justify-end mb-4 mt-4">
-                <p-button label="Add PBG / Retention" icon="pi pi-plus" size="small" (onClick)="openPbgDialog()" />
+                <p-button label="Add Bank Guarantee" icon="pi pi-plus" size="small" (onClick)="openPbgDialog()" />
               </div>
               <p-table [value]="pbgRows()" styleClass="p-datatable-sm" [rows]="20">
                 <ng-template pTemplate="header">
@@ -576,13 +594,13 @@ function parseDate(str: string): Date {
                   </tr>
                 </ng-template>
                 <ng-template pTemplate="emptymessage">
-                  <tr><td colspan="9" class="text-center text-gray-400 py-4">No PBG / retention records yet</td></tr>
+                  <tr><td colspan="9" class="text-center text-gray-400 py-4">No bank guarantee records yet</td></tr>
                 </ng-template>
               </p-table>
             </p-tabpanel>
 
-            <!-- Tab 6: Risks & Issues -->
-            <p-tabpanel [value]="6">
+            <!-- Tab 7: Risks & Issues -->
+            <p-tabpanel [value]="7">
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
                 <!-- Risks -->
                 <div>
@@ -651,8 +669,8 @@ function parseDate(str: string): Date {
               </div>
             </p-tabpanel>
 
-            <!-- Tab 7: Health -->
-            <p-tabpanel [value]="7">
+            <!-- Tab 0: Health -->
+            <p-tabpanel [value]="0">
               <div class="mt-4">
                 @if (!health()) {
                   <div class="text-center py-8">
@@ -691,11 +709,44 @@ function parseDate(str: string): Date {
                 }
               </div>
             </p-tabpanel>
+
+            <!-- Tab 2: Activities -->
+            <p-tabpanel [value]="2">
+              <div class="mt-4">
+                <app-activity-panel entityType="PROJECT" [entityId]="project()!.id" />
+              </div>
+            </p-tabpanel>
           </p-tabpanels>
         </p-tabs>
       }
 
       <!-- ===== Dialogs ===== -->
+
+      <!-- Document Dialog -->
+      <p-dialog [header]="docEditId ? 'Edit Document' : 'Add Document'" [(visible)]="docDialogVisible" [modal]="true" [style]="{width:'480px'}">
+        <div class="flex flex-col gap-4 pt-2">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">Document Name *</label>
+            <input pInputText [(ngModel)]="docName" placeholder="e.g. Work Order" class="w-full" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">
+              {{ docEditId ? 'Replace File (optional)' : 'Select File *' }}
+            </label>
+            <input type="file" (change)="onDocFileSelect($event)"
+                   class="block w-full text-sm text-gray-500
+                          file:mr-4 file:py-2 file:px-4 file:rounded file:border-0
+                          file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700
+                          hover:file:bg-blue-100" />
+          </div>
+        </div>
+        <ng-template pTemplate="footer">
+          <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="docDialogVisible=false" />
+          <p-button [label]="docEditId ? 'Update' : 'Upload'" icon="pi pi-upload"
+                    [disabled]="!docName.trim() || (!docEditId && !docFile)"
+                    (onClick)="saveDocument()" />
+        </ng-template>
+      </p-dialog>
 
       <!-- Milestone Dialog -->
       <p-dialog [header]="milestoneEditId ? 'Edit Milestone' : 'Add Milestone'" [(visible)]="milestoneDialogVisible" [modal]="true" [style]="{width:'600px'}">
@@ -707,10 +758,6 @@ function parseDate(str: string): Date {
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-gray-700">Description</label>
             <textarea pTextarea formControlName="description" [rows]="2" class="w-full"></textarea>
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium text-gray-700">Deliverable</label>
-            <input pInputText formControlName="deliverable" class="w-full" />
           </div>
           <div class="grid grid-cols-2 gap-4">
             <div class="flex flex-col gap-1">
@@ -743,8 +790,26 @@ function parseDate(str: string): Date {
         </ng-template>
       </p-dialog>
 
+      <!-- Deliverable Dialog -->
+      <p-dialog [header]="deliverableEditId ? 'Edit Deliverable' : 'Add Deliverable'" [(visible)]="deliverableDialogVisible" [modal]="true" [style]="{width:'500px'}">
+        <form [formGroup]="deliverableForm" class="flex flex-col gap-4 pt-2">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">Name *</label>
+            <input pInputText formControlName="name" class="w-full" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">Description</label>
+            <textarea pTextarea formControlName="description" [rows]="2" class="w-full"></textarea>
+          </div>
+        </form>
+        <ng-template pTemplate="footer">
+          <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="deliverableDialogVisible=false" />
+          <p-button [label]="deliverableEditId ? 'Update' : 'Add'" icon="pi pi-check" [disabled]="deliverableForm.invalid" (onClick)="saveDeliverable()" />
+        </ng-template>
+      </p-dialog>
+
       <!-- Task Dialog -->
-      <p-dialog [header]="taskEditId ? 'Edit Task' : 'Add Task'" [(visible)]="taskDialogVisible" [modal]="true" [style]="{width:'600px'}">
+      <p-dialog [header]="taskEditId ? 'Edit Work Item' : 'Add Work Item'" [(visible)]="taskDialogVisible" [modal]="true" [style]="{width:'600px'}">
         <form [formGroup]="taskForm" class="flex flex-col gap-4 pt-2">
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-gray-700">Title *</label>
@@ -766,8 +831,8 @@ function parseDate(str: string): Date {
               <p-select appendTo="body" formControlName="ownerUserId" [options]="userOptions()" optionLabel="name" optionValue="id" [filter]="true" [showClear]="true" placeholder="Select owner" class="w-full" />
             </div>
             <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Milestone</label>
-              <p-select appendTo="body" formControlName="milestoneId" [options]="milestoneRefOptions()" optionLabel="name" optionValue="id" [showClear]="true" placeholder="Select milestone" class="w-full" />
+              <label class="text-sm font-medium text-gray-700">Milestone *</label>
+              <p-select appendTo="body" formControlName="milestoneId" [options]="milestoneRefOptions()" optionLabel="name" optionValue="id" placeholder="Select milestone" class="w-full" />
             </div>
           </div>
           <div class="grid grid-cols-2 gap-4">
@@ -829,94 +894,8 @@ function parseDate(str: string): Date {
         </ng-template>
       </p-dialog>
 
-      <!-- Inflow Dialog -->
-      <p-dialog [header]="inflowEditId ? 'Edit Inflow' : 'Add Inflow'" [(visible)]="inflowDialogVisible" [modal]="true" [style]="{width:'500px'}">
-        <form [formGroup]="inflowForm" class="flex flex-col gap-4 pt-2">
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium text-gray-700">Description *</label>
-            <input pInputText formControlName="description" class="w-full" />
-          </div>
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium text-gray-700">Milestone</label>
-            <p-select appendTo="body" formControlName="milestoneId" [options]="milestoneRefOptions()" optionLabel="name" optionValue="id" [showClear]="true" placeholder="Select milestone" class="w-full" />
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Invoice Date *</label>
-              <p-datepicker appendTo="body" formControlName="invoiceDate" dateFormat="yy-mm-dd" class="w-full" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Amount (₹) *</label>
-              <p-inputNumber formControlName="amountRupees" mode="currency" currency="INR" locale="en-IN" class="w-full" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-4">
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">GST %</label>
-              <p-inputNumber formControlName="gstPct" [min]="0" [max]="100" suffix="%" class="w-full" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Retention %</label>
-              <p-inputNumber formControlName="retentionPct" [min]="0" [max]="100" suffix="%" class="w-full" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Status</label>
-              <p-select appendTo="body" formControlName="status" [options]="inflowStatuses" optionLabel="label" optionValue="value" class="w-full" />
-            </div>
-          </div>
-        </form>
-        <ng-template pTemplate="footer">
-          <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="inflowDialogVisible=false" />
-          <p-button [label]="inflowEditId ? 'Update' : 'Add'" icon="pi pi-check" [disabled]="inflowForm.invalid" (onClick)="saveInflow()" />
-        </ng-template>
-      </p-dialog>
-
-      <!-- Cash Flow Period Dialog -->
-      <p-dialog [header]="cashFlowEditId ? 'Edit Period' : 'Add Period'" [(visible)]="cashFlowDialogVisible" [modal]="true" [style]="{width:'600px'}">
-        <form [formGroup]="cashFlowForm" class="flex flex-col gap-4 pt-2">
-          <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium text-gray-700">Period Label *</label>
-            <input pInputText formControlName="periodLabel" class="w-full" />
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Period Start *</label>
-              <p-datepicker appendTo="body" formControlName="periodStart" dateFormat="yy-mm-dd" class="w-full" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Period End *</label>
-              <p-datepicker appendTo="body" formControlName="periodEnd" dateFormat="yy-mm-dd" class="w-full" />
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Opening Balance (₹)</label>
-              <p-inputNumber formControlName="openingBalanceRupees" mode="currency" currency="INR" locale="en-IN" class="w-full" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Billed (₹)</label>
-              <p-inputNumber formControlName="billedRupees" mode="currency" currency="INR" locale="en-IN" class="w-full" />
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-4">
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Received (₹)</label>
-              <p-inputNumber formControlName="receivedRupees" mode="currency" currency="INR" locale="en-IN" class="w-full" />
-            </div>
-            <div class="flex flex-col gap-1">
-              <label class="text-sm font-medium text-gray-700">Outflow (₹)</label>
-              <p-inputNumber formControlName="outflowRupees" mode="currency" currency="INR" locale="en-IN" class="w-full" />
-            </div>
-          </div>
-        </form>
-        <ng-template pTemplate="footer">
-          <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="cashFlowDialogVisible=false" />
-          <p-button [label]="cashFlowEditId ? 'Update' : 'Add'" icon="pi pi-check" [disabled]="cashFlowForm.invalid" (onClick)="saveCashFlow()" />
-        </ng-template>
-      </p-dialog>
-
       <!-- PBG Dialog -->
-      <p-dialog [header]="pbgEditId ? 'Edit PBG / Retention' : 'Add PBG / Retention'" [(visible)]="pbgDialogVisible" [modal]="true" [style]="{width:'600px'}">
+      <p-dialog [header]="pbgEditId ? 'Edit Bank Guarantee' : 'Add Bank Guarantee'" [(visible)]="pbgDialogVisible" [modal]="true" [style]="{width:'600px'}">
         <form [formGroup]="pbgForm" class="flex flex-col gap-4 pt-2">
           <div class="grid grid-cols-2 gap-4">
             <div class="flex flex-col gap-1">
@@ -1071,11 +1050,10 @@ export class ProjectDetailComponent implements OnInit {
   categoryOptions = signal<LookupItem[]>([]);
 
   // Tab data
+  documents = signal<ProjectDocumentRow[]>([]);
   milestones = signal<MilestoneRow[]>([]);
   tasks = signal<TaskRow[]>([]);
   budget = signal<BudgetData | null>(null);
-  inflowItems = signal<InflowItem[]>([]);
-  cashFlowRows = signal<CashFlowRow[]>([]);
   pbgRows = signal<PbgRow[]>([]);
   risks = signal<RiskRow[]>([]);
   issues = signal<IssueRow[]>([]);
@@ -1089,7 +1067,6 @@ export class ProjectDetailComponent implements OnInit {
   taskPriorities = TASK_PRIORITIES;
   taskStatuses = TASK_STATUSES;
   budgetCategories = BUDGET_CATEGORIES;
-  inflowStatuses = INFLOW_STATUSES;
   pbgTypes = PBG_TYPES;
   pbgStatuses = PBG_STATUSES;
   probabilityOptions = PROBABILITY_OPTIONS;
@@ -1098,6 +1075,12 @@ export class ProjectDetailComponent implements OnInit {
   issueSeverities = ISSUE_SEVERITIES;
   issueStatuses = ISSUE_STATUSES;
 
+  // Document dialog state
+  docDialogVisible = false;
+  docEditId: string | null = null;
+  docName = '';
+  docFile: File | null = null;
+
   // Dialog visibility & edit IDs
   milestoneDialogVisible = false;
   milestoneEditId: string | null = null;
@@ -1105,16 +1088,18 @@ export class ProjectDetailComponent implements OnInit {
   taskEditId: string | null = null;
   budgetLineDialogVisible = false;
   budgetLineEditId: string | null = null;
-  inflowDialogVisible = false;
-  inflowEditId: string | null = null;
-  cashFlowDialogVisible = false;
-  cashFlowEditId: string | null = null;
   pbgDialogVisible = false;
   pbgEditId: string | null = null;
   riskDialogVisible = false;
   riskEditId: string | null = null;
   issueDialogVisible = false;
   issueEditId: string | null = null;
+
+  // Deliverable state
+  expandedMilestoneId: string | null = null;
+  deliverableDialogVisible = false;
+  deliverableEditId: string | null = null;
+  deliverableEditMilestoneId: string | null = null;
 
   // Main form
   form = this.fb.group({
@@ -1137,7 +1122,6 @@ export class ProjectDetailComponent implements OnInit {
   milestoneForm = this.fb.group({
     name: ['', [Validators.required, Validators.maxLength(255)]],
     description: [''],
-    deliverable: [''],
     plannedDate: [null as Date | null, Validators.required],
     actualDate: [null as Date | null],
     percentOfContract: [null as number | null],
@@ -1145,12 +1129,17 @@ export class ProjectDetailComponent implements OnInit {
     status: ['NOT_STARTED', Validators.required],
   });
 
+  deliverableForm = this.fb.group({
+    name: ['', [Validators.required, Validators.maxLength(255)]],
+    description: [''],
+  });
+
   taskForm = this.fb.group({
     title: ['', [Validators.required, Validators.maxLength(255)]],
     priority: ['MEDIUM', Validators.required],
     status: ['TODO', Validators.required],
     ownerUserId: [''],
-    milestoneId: [''],
+    milestoneId: ['', Validators.required],
     estimateHours: [null as number | null],
     actualHours: [null as number | null],
     startDate: [null as Date | null],
@@ -1163,26 +1152,6 @@ export class ProjectDetailComponent implements OnInit {
     estimatedRupees: [null as number | null, [Validators.required, Validators.min(0)]],
     committedRupees: [null as number | null],
     actualRupees: [null as number | null],
-  });
-
-  inflowForm = this.fb.group({
-    description: ['', [Validators.required, Validators.maxLength(255)]],
-    milestoneId: [''],
-    invoiceDate: [null as Date | null, Validators.required],
-    amountRupees: [null as number | null, [Validators.required, Validators.min(0)]],
-    gstPct: [18 as number],
-    retentionPct: [0 as number],
-    status: ['PLANNED', Validators.required],
-  });
-
-  cashFlowForm = this.fb.group({
-    periodLabel: ['', [Validators.required, Validators.maxLength(100)]],
-    periodStart: [null as Date | null, Validators.required],
-    periodEnd: [null as Date | null, Validators.required],
-    openingBalanceRupees: [0 as number],
-    billedRupees: [0 as number],
-    receivedRupees: [0 as number],
-    outflowRupees: [0 as number],
   });
 
   pbgForm = this.fb.group({
@@ -1222,14 +1191,14 @@ export class ProjectDetailComponent implements OnInit {
 
   taskSummaryEntries(): [string, number][] {
     const p = this.project();
-    if (!p || !p.taskSummary) return [];
-    return Object.entries(p.taskSummary);
+    if (!p || !p.tasks || !p.tasks.byColumn) return [];
+    return Object.entries(p.tasks.byColumn);
   }
 
   budgetUtilization(): number {
     const b = this.budget();
-    if (!b || b.totals.estimated === 0) return 0;
-    return Math.round((b.totals.actual / b.totals.estimated) * 100);
+    if (!b || b.totals.totalEstimated === 0) return 0;
+    return Math.round((b.totals.totalActual / b.totals.totalEstimated) * 100);
   }
 
   ngOnInit(): void {
@@ -1287,11 +1256,10 @@ export class ProjectDetailComponent implements OnInit {
   }
 
   private loadAllTabData(id: string): void {
+    this.loadDocuments(id);
     this.loadMilestones(id);
     this.loadTasks(id);
     this.loadBudget(id);
-    this.loadInflow(id);
-    this.loadCashFlow(id);
     this.loadPbg(id);
     this.loadRisks(id);
     this.loadIssues(id);
@@ -1355,6 +1323,107 @@ export class ProjectDetailComponent implements OnInit {
     });
   }
 
+  // ===== Documents =====
+
+  private loadDocuments(id: string): void {
+    this.http.get<{ data: ProjectDocumentRow[] }>(`${environment.apiBaseUrl}/projects/${id}/documents`).subscribe({
+      next: (r) => this.documents.set(r.data),
+      error: () => {},
+    });
+  }
+
+  openDocDialog(doc?: ProjectDocumentRow): void {
+    if (doc) {
+      this.docEditId = doc.id;
+      this.docName = doc.name;
+    } else {
+      this.docEditId = null;
+      this.docName = '';
+    }
+    this.docFile = null;
+    this.docDialogVisible = true;
+  }
+
+  onDocFileSelect(event: Event): void {
+    this.docFile = (event.target as HTMLInputElement).files?.[0] ?? null;
+  }
+
+  saveDocument(): void {
+    if (!this.project()) return;
+    const formData = new FormData();
+    formData.append('name', this.docName.trim());
+    if (this.docFile) formData.append('file', this.docFile);
+
+    const pid = this.project()!.id;
+    const url = `${environment.apiBaseUrl}/projects/${pid}/documents`;
+    const req$ = this.docEditId
+      ? this.http.patch(`${url}/${this.docEditId}`, formData)
+      : this.http.post(url, formData);
+
+    req$.subscribe({
+      next: () => {
+        this.docDialogVisible = false;
+        this.loadDocuments(pid);
+        this.msg.add({ severity: 'success', summary: 'Saved', detail: `Document ${this.docEditId ? 'updated' : 'uploaded'}` });
+      },
+      error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
+    });
+  }
+
+  viewDocument(doc: ProjectDocumentRow): void {
+    if (!this.project()) return;
+    this.http.get(`${environment.apiBaseUrl}/projects/${this.project()!.id}/documents/${doc.id}/download`, { responseType: 'blob' }).subscribe({
+      next: (blob) => window.open(URL.createObjectURL(blob), '_blank'),
+      error: () => this.msg.add({ severity: 'error', summary: 'Error', detail: 'Failed to open document' }),
+    });
+  }
+
+  deleteDocument(doc: ProjectDocumentRow): void {
+    this.confirm.confirm({
+      message: `Delete "${doc.name}"?`,
+      accept: () => {
+        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/documents/${doc.id}`).subscribe({
+          next: () => { this.loadDocuments(this.project()!.id); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
+          error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
+        });
+      },
+    });
+  }
+
+  onDocDrop(event: CdkDragDrop<ProjectDocumentRow[]>): void {
+    if (event.previousIndex === event.currentIndex) return;
+    const docs = [...this.documents()];
+    moveItemInArray(docs, event.previousIndex, event.currentIndex);
+    this.documents.set(docs);
+    this.http.put(`${environment.apiBaseUrl}/projects/${this.project()!.id}/documents/reorder`, { ids: docs.map(d => d.id) }).subscribe({
+      error: () => { this.msg.add({ severity: 'error', summary: 'Error', detail: 'Failed to save order' }); this.loadDocuments(this.project()!.id); },
+    });
+  }
+
+  formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  docTypeIcon(mime: string): string {
+    if (mime.startsWith('image/')) return 'pi pi-image';
+    if (mime === 'application/pdf') return 'pi pi-file-pdf';
+    if (mime.includes('word') || mime.includes('.document')) return 'pi pi-file-word';
+    if (mime.includes('presentation') || mime.includes('powerpoint')) return 'pi pi-desktop';
+    if (mime.includes('spreadsheet') || mime.includes('excel')) return 'pi pi-table';
+    return 'pi pi-file';
+  }
+
+  docTypeColor(mime: string): string {
+    if (mime.startsWith('image/')) return '#8B5CF6';
+    if (mime === 'application/pdf') return '#EF4444';
+    if (mime.includes('word') || mime.includes('.document')) return '#3B82F6';
+    if (mime.includes('presentation') || mime.includes('powerpoint')) return '#F97316';
+    if (mime.includes('spreadsheet') || mime.includes('excel')) return '#22C55E';
+    return '#6B7280';
+  }
+
   // ===== Milestones =====
 
   private loadMilestones(id: string): void {
@@ -1373,7 +1442,6 @@ export class ProjectDetailComponent implements OnInit {
       this.milestoneForm.patchValue({
         name: m.name,
         description: m.description ?? '',
-        deliverable: m.deliverable ?? '',
         plannedDate: parseDate(m.plannedDate),
         actualDate: m.actualDate ? parseDate(m.actualDate) : null,
         percentOfContract: m.percentOfContract,
@@ -1393,7 +1461,6 @@ export class ProjectDetailComponent implements OnInit {
     const body: Record<string, unknown> = {
       name: v.name,
       description: v.description || null,
-      deliverable: v.deliverable || null,
       plannedDate: v.plannedDate instanceof Date ? toLocalDate(v.plannedDate) : v.plannedDate,
       actualDate: v.actualDate instanceof Date ? toLocalDate(v.actualDate) : v.actualDate || null,
       percentOfContract: v.percentOfContract,
@@ -1426,6 +1493,72 @@ export class ProjectDetailComponent implements OnInit {
     });
   }
 
+  toggleMilestoneExpand(mid: string): void {
+    this.expandedMilestoneId = this.expandedMilestoneId === mid ? null : mid;
+  }
+
+  // ===== Deliverables =====
+
+  openDeliverableDialog(milestoneId: string, d?: DeliverableRow): void {
+    this.deliverableEditMilestoneId = milestoneId;
+    if (d) {
+      this.deliverableEditId = d.id;
+      this.deliverableForm.patchValue({ name: d.name, description: d.description ?? '' });
+    } else {
+      this.deliverableEditId = null;
+      this.deliverableForm.reset();
+    }
+    this.deliverableDialogVisible = true;
+  }
+
+  saveDeliverable(): void {
+    if (this.deliverableForm.invalid || !this.project() || !this.deliverableEditMilestoneId) return;
+    const v = this.deliverableForm.value;
+    const body: Record<string, unknown> = {
+      name: v.name,
+      description: v.description || null,
+    };
+    const pid = this.project()!.id;
+    const mid = this.deliverableEditMilestoneId;
+    const req$ = this.deliverableEditId
+      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/milestones/${mid}/deliverables/${this.deliverableEditId}`, body)
+      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/milestones/${mid}/deliverables`, body);
+
+    req$.subscribe({
+      next: () => {
+        this.deliverableDialogVisible = false;
+        this.loadMilestones(pid);
+        this.msg.add({ severity: 'success', summary: 'Saved', detail: `Deliverable ${this.deliverableEditId ? 'updated' : 'added'}` });
+      },
+      error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
+    });
+  }
+
+  deleteDeliverable(milestoneId: string, did: string): void {
+    this.confirm.confirm({
+      message: 'Delete this deliverable?',
+      accept: () => {
+        const pid = this.project()!.id;
+        this.http.delete(`${environment.apiBaseUrl}/projects/${pid}/milestones/${milestoneId}/deliverables/${did}`).subscribe({
+          next: () => { this.loadMilestones(pid); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
+          error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
+        });
+      },
+    });
+  }
+
+  toggleDeliverableComplete(milestoneId: string, did: string): void {
+    if (!this.project()) return;
+    const pid = this.project()!.id;
+    this.http.post(`${environment.apiBaseUrl}/projects/${pid}/milestones/${milestoneId}/deliverables/${did}/complete`, {}).subscribe({
+      next: () => {
+        this.loadMilestones(pid);
+        this.msg.add({ severity: 'success', summary: 'Updated', detail: 'Deliverable status toggled' });
+      },
+      error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
+    });
+  }
+
   // ===== Tasks =====
 
   private loadTasks(id: string): void {
@@ -1441,9 +1574,9 @@ export class ProjectDetailComponent implements OnInit {
       this.taskForm.patchValue({
         title: t.title,
         priority: t.priority,
-        status: t.status,
-        ownerUserId: '',
-        milestoneId: '',
+        status: t.kanbanColumn || t.status,
+        ownerUserId: t.ownerId ?? '',
+        milestoneId: t.milestoneId ?? '',
         estimateHours: t.estimateHours,
         actualHours: t.actualHours,
         startDate: t.startDate ? parseDate(t.startDate) : null,
@@ -1462,8 +1595,8 @@ export class ProjectDetailComponent implements OnInit {
     const body: Record<string, unknown> = {
       title: v.title,
       priority: v.priority,
-      status: v.status,
-      ownerUserId: v.ownerUserId || null,
+      kanbanColumn: v.status || 'BACKLOG',
+      ownerId: v.ownerUserId || null,
       milestoneId: v.milestoneId || null,
       estimateHours: v.estimateHours,
       actualHours: v.actualHours,
@@ -1570,131 +1703,10 @@ export class ProjectDetailComponent implements OnInit {
     });
   }
 
-  // ===== Inflow Plan =====
-
-  private loadInflow(id: string): void {
-    this.http.get<{ data: InflowItem[] }>(`${environment.apiBaseUrl}/projects/${id}/inflow-plan?limit=200`).subscribe({
-      next: (r) => this.inflowItems.set(r.data),
-      error: () => {},
-    });
-  }
-
-  openInflowDialog(item?: InflowItem): void {
-    if (item) {
-      this.inflowEditId = item.id;
-      this.inflowForm.patchValue({
-        description: item.description,
-        milestoneId: item.milestoneId ?? '',
-        invoiceDate: parseDate(item.invoiceDate),
-        amountRupees: item.amountPaise / 100,
-        gstPct: item.gstPct,
-        retentionPct: item.retentionPct,
-        status: item.status,
-      });
-    } else {
-      this.inflowEditId = null;
-      this.inflowForm.reset({ gstPct: 18, retentionPct: 0, status: 'PLANNED' });
-    }
-    this.inflowDialogVisible = true;
-  }
-
-  saveInflow(): void {
-    if (this.inflowForm.invalid || !this.project()) return;
-    const v = this.inflowForm.value;
-    const body: Record<string, unknown> = {
-      description: v.description,
-      milestoneId: v.milestoneId || null,
-      invoiceDate: v.invoiceDate instanceof Date ? toLocalDate(v.invoiceDate) : v.invoiceDate,
-      amountPaise: v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0,
-      gstPct: v.gstPct ?? 0,
-      retentionPct: v.retentionPct ?? 0,
-      status: v.status,
-    };
-    const pid = this.project()!.id;
-    const req$ = this.inflowEditId
-      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/inflow-plan/${this.inflowEditId}`, body)
-      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/inflow-plan`, body);
-
-    req$.subscribe({
-      next: () => {
-        this.inflowDialogVisible = false;
-        this.loadInflow(pid);
-        this.msg.add({ severity: 'success', summary: 'Saved', detail: `Inflow ${this.inflowEditId ? 'updated' : 'added'}` });
-      },
-      error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
-    });
-  }
-
-  deleteInflow(iid: string): void {
-    this.confirm.confirm({
-      message: 'Delete this inflow item?',
-      accept: () => {
-        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/inflow-plan/${iid}`).subscribe({
-          next: () => { this.loadInflow(this.project()!.id); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
-        });
-      },
-    });
-  }
-
-  // ===== Cash Flow Periods =====
-
-  private loadCashFlow(id: string): void {
-    this.http.get<{ data: CashFlowRow[] }>(`${environment.apiBaseUrl}/projects/${id}/cash-flow?limit=200`).subscribe({
-      next: (r) => this.cashFlowRows.set(r.data),
-      error: () => {},
-    });
-  }
-
-  openCashFlowDialog(cf?: CashFlowRow): void {
-    if (cf) {
-      this.cashFlowEditId = cf.id;
-      this.cashFlowForm.patchValue({
-        periodLabel: cf.periodLabel,
-        periodStart: parseDate(cf.periodStart),
-        periodEnd: parseDate(cf.periodEnd),
-        openingBalanceRupees: cf.openingBalancePaise / 100,
-        billedRupees: cf.billedPaise / 100,
-        receivedRupees: cf.receivedPaise / 100,
-        outflowRupees: cf.outflowPaise / 100,
-      });
-    } else {
-      this.cashFlowEditId = null;
-      this.cashFlowForm.reset({ openingBalanceRupees: 0, billedRupees: 0, receivedRupees: 0, outflowRupees: 0 });
-    }
-    this.cashFlowDialogVisible = true;
-  }
-
-  saveCashFlow(): void {
-    if (this.cashFlowForm.invalid || !this.project()) return;
-    const v = this.cashFlowForm.value;
-    const body: Record<string, unknown> = {
-      periodLabel: v.periodLabel,
-      periodStart: v.periodStart instanceof Date ? toLocalDate(v.periodStart) : v.periodStart,
-      periodEnd: v.periodEnd instanceof Date ? toLocalDate(v.periodEnd) : v.periodEnd,
-      openingBalancePaise: v.openingBalanceRupees != null ? Math.round(v.openingBalanceRupees * 100) : 0,
-      billedPaise: v.billedRupees != null ? Math.round(v.billedRupees * 100) : 0,
-      receivedPaise: v.receivedRupees != null ? Math.round(v.receivedRupees * 100) : 0,
-      outflowPaise: v.outflowRupees != null ? Math.round(v.outflowRupees * 100) : 0,
-    };
-    const pid = this.project()!.id;
-    const req$ = this.cashFlowEditId
-      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/cash-flow/${this.cashFlowEditId}`, body)
-      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/cash-flow`, body);
-
-    req$.subscribe({
-      next: () => {
-        this.cashFlowDialogVisible = false;
-        this.loadCashFlow(pid);
-        this.msg.add({ severity: 'success', summary: 'Saved', detail: `Cash flow period ${this.cashFlowEditId ? 'updated' : 'added'}` });
-      },
-      error: (err: HttpErrorResponse) => this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed' }),
-    });
-  }
-
   // ===== PBG & Retention =====
 
   private loadPbg(id: string): void {
-    this.http.get<{ data: PbgRow[] }>(`${environment.apiBaseUrl}/projects/${id}/pbg-records?limit=200`).subscribe({
+    this.http.get<{ data: PbgRow[] }>(`${environment.apiBaseUrl}/projects/${id}/pbg?limit=200`).subscribe({
       next: (r) => this.pbgRows.set(r.data),
       error: () => {},
     });
@@ -1739,8 +1751,8 @@ export class ProjectDetailComponent implements OnInit {
     };
     const pid = this.project()!.id;
     const req$ = this.pbgEditId
-      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/pbg-records/${this.pbgEditId}`, body)
-      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/pbg-records`, body);
+      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/pbg/${this.pbgEditId}`, body)
+      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/pbg`, body);
 
     req$.subscribe({
       next: () => {
@@ -1756,7 +1768,7 @@ export class ProjectDetailComponent implements OnInit {
     this.confirm.confirm({
       message: 'Delete this PBG / retention record?',
       accept: () => {
-        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/pbg-records/${pid}`).subscribe({
+        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/pbg/${pid}`).subscribe({
           next: () => { this.loadPbg(this.project()!.id); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
         });
       },
@@ -1766,7 +1778,7 @@ export class ProjectDetailComponent implements OnInit {
   // ===== Risks =====
 
   private loadRisks(id: string): void {
-    this.http.get<{ data: RiskRow[] }>(`${environment.apiBaseUrl}/projects/${id}/risks?limit=200`).subscribe({
+    this.http.get<{ data: RiskRow[] }>(`${environment.apiBaseUrl}/projects/${id}/risk-issues/risks?limit=200`).subscribe({
       next: (r) => this.risks.set(r.data),
       error: () => {},
     });
@@ -1782,7 +1794,7 @@ export class ProjectDetailComponent implements OnInit {
         impact: r.impact,
         mitigation: r.mitigation ?? '',
         status: r.status,
-        ownerUserId: '',
+        ownerUserId: r.ownerId ?? '',
       });
     } else {
       this.riskEditId = null;
@@ -1801,12 +1813,12 @@ export class ProjectDetailComponent implements OnInit {
       impact: v.impact,
       mitigation: v.mitigation || null,
       status: v.status,
-      ownerUserId: v.ownerUserId || null,
+      ownerId: v.ownerUserId || null,
     };
     const pid = this.project()!.id;
     const req$ = this.riskEditId
-      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/risks/${this.riskEditId}`, body)
-      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/risks`, body);
+      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/risk-issues/risks/${this.riskEditId}`, body)
+      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/risk-issues/risks`, body);
 
     req$.subscribe({
       next: () => {
@@ -1822,7 +1834,7 @@ export class ProjectDetailComponent implements OnInit {
     this.confirm.confirm({
       message: 'Delete this risk?',
       accept: () => {
-        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/risks/${rid}`).subscribe({
+        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/risk-issues/risks/${rid}`).subscribe({
           next: () => { this.loadRisks(this.project()!.id); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
         });
       },
@@ -1832,7 +1844,7 @@ export class ProjectDetailComponent implements OnInit {
   // ===== Issues =====
 
   private loadIssues(id: string): void {
-    this.http.get<{ data: IssueRow[] }>(`${environment.apiBaseUrl}/projects/${id}/issues?limit=200`).subscribe({
+    this.http.get<{ data: IssueRow[] }>(`${environment.apiBaseUrl}/projects/${id}/risk-issues/issues?limit=200`).subscribe({
       next: (r) => this.issues.set(r.data),
       error: () => {},
     });
@@ -1847,7 +1859,7 @@ export class ProjectDetailComponent implements OnInit {
         severity: iss.severity,
         status: iss.status,
         resolution: iss.resolution ?? '',
-        ownerUserId: '',
+        ownerUserId: iss.ownerId ?? '',
       });
     } else {
       this.issueEditId = null;
@@ -1865,12 +1877,12 @@ export class ProjectDetailComponent implements OnInit {
       severity: v.severity,
       status: v.status,
       resolution: v.resolution || null,
-      ownerUserId: v.ownerUserId || null,
+      ownerId: v.ownerUserId || null,
     };
     const pid = this.project()!.id;
     const req$ = this.issueEditId
-      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/issues/${this.issueEditId}`, body)
-      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/issues`, body);
+      ? this.http.patch(`${environment.apiBaseUrl}/projects/${pid}/risk-issues/issues/${this.issueEditId}`, body)
+      : this.http.post(`${environment.apiBaseUrl}/projects/${pid}/risk-issues/issues`, body);
 
     req$.subscribe({
       next: () => {
@@ -1886,7 +1898,7 @@ export class ProjectDetailComponent implements OnInit {
     this.confirm.confirm({
       message: 'Delete this issue?',
       accept: () => {
-        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/issues/${iid}`).subscribe({
+        this.http.delete(`${environment.apiBaseUrl}/projects/${this.project()!.id}/risk-issues/issues/${iid}`).subscribe({
           next: () => { this.loadIssues(this.project()!.id); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
         });
       },
@@ -1905,7 +1917,7 @@ export class ProjectDetailComponent implements OnInit {
 
   // ===== Helpers =====
 
-  goBack(): void { this.router.navigate(['/projects']); }
+  goBack(): void { this.router.navigate(['/projects/list']); }
 
   formatRupees(paise: number): string {
     return '\u20B9' + (paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -1919,6 +1931,10 @@ export class ProjectDetailComponent implements OnInit {
       case 'CLOSED': return 'info';
       default: return 'secondary';
     }
+  }
+
+  completedDeliverableCount(deliverables: DeliverableRow[]): number {
+    return deliverables.filter((d) => d.status === 'COMPLETED').length;
   }
 
   milestoneSeverity(s: string): 'secondary' | 'info' | 'success' {
@@ -1948,15 +1964,6 @@ export class ProjectDetailComponent implements OnInit {
       case 'IN_REVIEW': return 'warn';
       case 'DONE': return 'success';
       case 'BLOCKED': return 'danger';
-      default: return 'secondary';
-    }
-  }
-
-  inflowStatusSeverity(s: string): 'secondary' | 'info' | 'success' {
-    switch (s) {
-      case 'PLANNED': return 'secondary';
-      case 'INVOICED': return 'info';
-      case 'RECEIVED': return 'success';
       default: return 'secondary';
     }
   }

@@ -13,6 +13,7 @@ import { cashFlowRouter } from './cashflow.routes.js';
 import { pbgRouter } from './pbg.routes.js';
 import { riskRouter } from './risk.routes.js';
 import { healthRouter as projectHealthRouter } from './health.routes.js';
+import { projectDocumentRouter } from './document.routes.js';
 
 // --- Zod schemas ---
 
@@ -301,6 +302,14 @@ projectRouter.patch(
 
     const updated = await prisma.project.update({ where: { id: existing.id }, data });
 
+    // When project first moves to ACTIVE, snapshot originalPlannedDate on milestones
+    if (body.status === 'ACTIVE' && existing.status === 'DRAFT') {
+      await prisma.$executeRawUnsafe(
+        `UPDATE milestone SET original_planned_date = planned_date WHERE project_id = ? AND deleted_at IS NULL AND original_planned_date IS NULL`,
+        existing.id,
+      );
+    }
+
     await recordAudit(req, {
       action: 'UPDATE', resourceType: 'project', resourceId: existing.id,
       before: { name: existing.name, status: existing.status },
@@ -347,6 +356,7 @@ projectRouter.delete(
 
 // --- Mount sub-routers ---
 
+projectRouter.use('/:id/documents', projectDocumentRouter);
 projectRouter.use('/:id/milestones', milestoneRouter);
 projectRouter.use('/:id/tasks', taskRouter);
 projectRouter.use('/:id/budget', budgetRouter);

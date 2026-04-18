@@ -176,7 +176,7 @@ export class KanbanBoardComponent implements OnInit {
         labels: string | null;
         estimateHours: number | null;
         actualHours: number | null;
-      }> }>(`${this.apiBase}/projects/${this.projectId}/tasks?limit=500`)
+      }> }>(`${this.apiBase}/projects/${this.projectId}/tasks?limit=200`)
       .subscribe({
         next: (res) => {
           const taskMap = new Map<string, TaskCard[]>();

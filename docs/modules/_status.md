@@ -49,17 +49,35 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 
 | Component | Status | Notes |
 |---|---|---|
-| Project CRUD + detail page | 🟢 | FR-3.1, 3.2, 3.23 — charter, BU-scoped, 8-tab detail page |
-| Milestones | 🟢 | FR-3.3 — payment schedule, deliverables, % of contract |
-| WBS + Tasks | 🟢 | FR-3.4, 3.6 — hierarchical, priority, kanban column, effort logging |
-| Kanban board | 🟢 | FR-3.5 — 6 fixed columns, CDK drag-drop, optimistic updates |
+| Project CRUD + detail page | 🟢 | FR-3.1, 3.2, 3.23 — charter, BU-scoped, 9-tab detail page (Health, Overview, Activities, Work Items, Milestones, Budget, Bank Guarantees, Risks & Issues, Documents) |
+| Milestones + Deliverables | 🟢 | FR-3.3 — deliverables with auto-complete, original planned date, % of contract |
+| Work Items (WBS) | 🟢 | FR-3.4, 3.6 — hierarchical, priority, milestone-required, effort logging |
+| Kanban board | 🟢 | FR-3.5 — 6 fixed columns, CDK drag-drop, standalone page + in-project |
 | Budget | 🟢 | FR-3.10 — line-items: Estimated/Committed/Actual/Variance |
-| Inflow Plan | 🟢 | FR-3.12 — milestone-aligned invoicing, GST%, retention% |
-| Cash Flow | 🟢 | FR-3.13 — monthly periods, opening/billed/received/outflow/closing |
-| PBG & Retention | 🟢 | FR-3.18 — PBG/Retention records with expiry tracking |
+| Inflow Plan + Cash Flow | 🟢 | FR-3.12, 3.13 — standalone Cash Flow page with project selector |
+| Bank Guarantees | 🟢 | FR-3.18 — PBG/Retention records with expiry tracking |
 | Risks & Issues | 🟢 | FR-3.19 — risk register + issue register |
 | Health Dashboard | 🟢 | FR-3.20 — RAG status (schedule/budget/scope/overall) |
-| Activity Panel | 🟢 | Embedded on project detail overview tab |
+| Project Documents | 🟢 | Upload, card view, drag-reorder |
+| Activities tab | 🟢 | Embedded activity panel on project detail |
+| Project Dashboard | 🟢 | Summary cards, contract value, filterable table |
+
+## R3.1 — Execution Enhancements (deferred from R3)
+
+| Component | Status | Notes |
+|---|---|---|
+| Auto-create Project from Opportunity | 🔲 | FR-3.1 — wire Award → Project creation (needs R4 Award) |
+| Kanban swim-lanes & WIP limits | 🔲 | FR-3.5 — configurable columns, swim-lanes |
+| Baseline schedule & variance | 🔲 | FR-3.8 — baseline-vs-current variance tracking |
+| Resource plan + over-allocation | 🔲 | FR-3.9 — resource allocation with warnings |
+| Commitment accounting | 🔲 | FR-3.11 — POs reduce available budget before invoice |
+| Estimate-at-Completion recompute | 🔲 | FR-3.14 — weekly EAC recalculation |
+| Expense capture (project-level) | 🔲 | FR-3.15 — delegates to Module 4 (needs R6) |
+| Budget validation on expenses | 🔲 | FR-3.16 — block over-budget submissions (needs R6) |
+| Post-approval actuals + cash-flow | 🔲 | FR-3.17 — auto-update on expense approval (needs R6) |
+| Variance alerts (80%/100%) | 🔲 | FR-3.21 — threshold notifications |
+| Board analytics (cycle/lead time) | 🔲 | FR-3.7 — kanban metrics |
+| Mobile work item updates | 🔲 | FR-3.22 — task + expense ≤ 60s (needs R10 Ionic) |
 
 ## R4 — Evaluation & Award
 
@@ -74,11 +92,11 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 
 | Component | Status | Notes |
 |---|---|---|
-| Budget / line-items | 🔲 | FR-3.10 |
-| Commitment accounting | 🔲 | FR-3.11 |
-| Inflow plan | 🔲 | FR-3.12 |
-| Cash-flow forecast | 🔲 | FR-3.13 |
-| PBG / retention registers | 🔲 | FR-3.18 |
+| Budget / line-items | 🟢 | Shipped in R3 |
+| Inflow plan | 🟢 | Shipped in R3 |
+| Cash-flow periods | 🟢 | Shipped in R3 |
+| PBG / retention registers | 🟢 | Shipped in R3 (renamed Bank Guarantees) |
+| Commitment accounting | 🔲 | FR-3.11 — moved to R3.1 |
 
 ## R6 — Expense Management
 
@@ -140,11 +158,12 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 
 ## Next up (top of queue)
 
-1. **R3 Execution Core** — Project charter, milestones, WBS, Kanban, basic expense capture
-2. **R4 Evaluation & Award** — Bid evaluation sub-stages, clarification log, award + auto-handover
-3. Pick items from **R10** (Org masters, RBAC, Expiry dashboard, Ionic mobile)
-4. **R11 Tender Workflows** — Managed Tenders, Go/No-Go, Bid Submission
+1. **R4 Evaluation & Award** — Bid evaluation sub-stages, clarification log, award + auto-handover
+2. **R6 Expense Management** — Expense sheets, approval engine, policy engine
+3. **R3.1 Execution Enhancements** — items deferred from R3 (many depend on R4/R6)
+4. Pick items from **R10** (Org masters, RBAC, Expiry dashboard, Ionic mobile)
+5. **R11 Tender Workflows** — Managed Tenders, Go/No-Go, Bid Submission
 
 ## Pending decision
 
-User to choose next session.
+User to choose next release.
