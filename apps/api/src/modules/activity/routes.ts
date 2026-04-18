@@ -82,12 +82,9 @@ function actorId(req: import('express').Request): string {
   return raw.length <= 26 ? raw : raw.slice(0, 26);
 }
 
-/** Resolve the DB user ID from the Keycloak sub in the JWT */
-async function resolveMyUserId(req: import('express').Request): Promise<string | null> {
-  const sub = req.user?.id;
-  if (!sub) return null;
-  const user = await prisma.user.findUnique({ where: { externalId: sub }, select: { id: true } });
-  return user?.id ?? null;
+/** Get the current user's DB ID (already resolved by auth middleware) */
+function resolveMyUserId(req: import('express').Request): string | null {
+  return req.user?.id ?? null;
 }
 
 const ACTIVITY_INCLUDE = {
@@ -309,9 +306,11 @@ activityRouter.get(
     // Tab-based filtering
     const now = new Date();
     if (q.tab === 'open') {
+      // All activities with due date today or earlier (tasks due today/overdue + events starting today or earlier)
+      const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
       where.OR = [
-        { activityType: 'TASK', taskStatus: { in: ['OPEN', 'OVERDUE'] } },
-        { activityType: 'EVENT', endDateTime: { gte: now } },
+        { activityType: 'TASK', taskStatus: { in: ['OPEN', 'OVERDUE'] }, dueDateTime: { lte: endOfToday } },
+        { activityType: 'EVENT', startDateTime: { lte: endOfToday }, endDateTime: { gte: now } },
       ];
     } else if (q.tab === 'upcoming') {
       const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);

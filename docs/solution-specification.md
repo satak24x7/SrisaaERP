@@ -133,6 +133,58 @@
 - Passwords never returned in list view — only decrypted on individual GET.
 - Only the **owner** can edit or delete entries.
 
+## Cross-cutting: Execution Core Patterns
+
+### Milestone Deliverables
+- `MilestoneDeliverable` model: each milestone can have multiple deliverables (name, description, status, completedDate).
+- **Auto-complete**: when all deliverables for a milestone are marked COMPLETED, the milestone status automatically transitions to COMPLETED.
+- `Milestone.originalPlannedDate` — set once when the project transitions from DRAFT to ACTIVE. Enables baseline-vs-actual variance tracking.
+- Milestones track `% of contract` for invoicing alignment.
+
+### Work Items (WBS)
+- "Task" renamed to "Work Item" in the project execution UI context. The API still uses `/projects/:id/tasks` for backward compatibility.
+- Hierarchical (parent-child tree), milestone-required, priority (LOW/MEDIUM/HIGH/CRITICAL).
+- Kanban column assignment with 6 fixed columns: Backlog, To Do, In Progress, Blocked, In Review, Done.
+- Effort logging per work item per day via `TaskEffortLog`.
+
+### Bank Guarantees
+- Renamed from "PBG & Retention" to "Bank Guarantees" for clarity.
+- Types: PBG (Performance Bank Guarantee) and RETENTION.
+- Fields: bank name, BG number, amount, issued date, expiry date, status (ACTIVE/RELEASED/EXPIRED).
+- API: `CRUD /projects/:id/pbg-records` (API path unchanged for backward compatibility).
+
+### Project Documents
+- `ProjectDocument` model: name, fileName, mimeType, fileSize, storagePath, sortOrder.
+- Files stored on disk (`uploads/project-docs/:projectId/`); migrateable to S3/MinIO.
+- Card view in UI with file-type icons, drag-to-reorder via CDK.
+- Authenticated file download via blob fetch.
+
+### Cash Flow (Standalone)
+- Cash Flow moved from an in-project tab to a standalone page at `/execution/cash-flow`.
+- Project selector dropdown to view cash flow for any project.
+- Two sections: Inflow Plan (milestone-aligned invoices) + Cash Flow Periods (monthly balances).
+
+## Cross-cutting: Mobile App Architecture
+
+### Stack
+- **Ionic 8** (UI framework) + **Capacitor 6** (native bridge) + **Angular 19** (app framework)
+- Located at `apps/mobile/` in the monorepo
+- Shares API endpoints with the web app (same Express backend)
+
+### Authentication
+- Keycloak OIDC via `angular-auth-oidc-client` (same library as web app)
+- Token refresh handled automatically; secured routes via `AuthGuard`
+
+### Tab Structure
+1. **Activities** — list view with Open/Upcoming/Completed segment tabs, My Items toggle, create/edit/detail pages, swipe actions (complete, edit)
+2. **Calendar** — custom month grid with colored dots per day (green=events, blue=tasks, purple=travel), day selection shows that day's events, multi-day event support
+3. **Travel Plans** — list with status filter chips, detail page with 4 segments (Tickets, Hotels, Expenses, Summary), workflow transition buttons based on current status
+
+### Platform Support
+- Android platform configured, debug APK builds successfully
+- iOS support available via Capacitor but not yet configured
+- Online only (no offline/sync support yet)
+
 ## Sales workflow (quick map)
 
 ```

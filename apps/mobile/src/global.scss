@@ -1,0 +1,23 @@
+/*
+ * Ionic core CSS
+ */
+@import '@ionic/angular/css/core.css';
+
+/*
+ * Ionic default theme / structure
+ */
+@import '@ionic/angular/css/normalize.css';
+@import '@ionic/angular/css/structure.css';
+@import '@ionic/angular/css/typography.css';
+@import '@ionic/angular/css/display.css';
+
+/*
+ * Ionic padding, float, text-alignment, flex utilities
+ */
+@import '@ionic/angular/css/padding.css';
+@import '@ionic/angular/css/float-elements.css';
+@import '@ionic/angular/css/text-alignment.css';
+@import '@ionic/angular/css/text-transformation.css';
+@import '@ionic/angular/css/flex-utils.css';
+
+/* Ionicons are loaded automatically by @ionic/angular */

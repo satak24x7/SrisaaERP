@@ -4,6 +4,34 @@ All notable changes to the GovProjects Platform. Based on [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added (2026-04-19 — Mobile App: Ionic + Capacitor)
+- **Mobile app scaffold** — `apps/mobile/` with Angular 19 + Ionic 8 + Capacitor 6. Tab-based navigation (Activities, Calendar, Travel Plans). Keycloak OIDC authentication via `angular-auth-oidc-client`.
+- **Activities tab** — list view with Open/Upcoming/Completed segment tabs, My Items toggle, create/edit/detail pages with form validation, swipe actions (complete task, edit), floating action button for new activity.
+- **Calendar tab** — custom month grid with colored dots (green=events, blue=tasks, purple=travel plans), day selection shows day's events in a list, multi-day event rendering, navigation between months.
+- **Travel Plans tab** — list with status filter chips (All/Draft/Submitted/Approved/Completed), detail page with 4 segments (Tickets/Hotels/Expenses/Summary), workflow transition buttons (Submit/Approve/Reject/Complete) based on current status and user role.
+- **Android platform** — Capacitor Android project configured, debug APK builds successfully via `npx cap sync android && cd android && ./gradlew assembleDebug`.
+
+### Changed (2026-04-19 — R3 Architecture Refinements)
+- **Task renamed to Work Item** — UI labels in project execution context changed from "Task" to "Work Item". API paths (`/tasks`) unchanged for backward compatibility.
+- **PBG & Retention renamed to Bank Guarantees** — clearer label across UI. API paths (`/pbg-records`) unchanged.
+- **MilestoneDeliverable model** — milestones now have child deliverables; auto-complete milestone when all deliverables marked COMPLETED.
+- **Milestone.originalPlannedDate** — set once on project DRAFT to ACTIVE transition; enables baseline variance tracking.
+- **Cash Flow moved to standalone page** — removed from project detail tabs; now at `/execution/cash-flow` with a project selector dropdown.
+- **Sidebar accordion** — only one group open at a time (accordion behavior).
+- **Activity `mine=true` filter fixed** — `resolveMyUserId` was returning undefined; now correctly resolves from auth context.
+- **Activity category** — resolves display label from lookup list instead of raw value.
+- **Activities linkable to Projects** — `PROJECT` added to polymorphic association entity types.
+- **Project Dashboard** — summary cards with contract value totals, filterable project table.
+- **Project Documents** — upload with card view, drag-reorder via CDK, authenticated blob download.
+- **9-tab project detail page** — Health, Overview, Activities, Work Items, Milestones, Budget, Bank Guarantees, Risks & Issues, Documents.
+
+### Updated docs (2026-04-19)
+- `docs/modules/_status.md` — R3 components marked shipped, R3.1 deferred items listed, Mobile App entry added to R10
+- `docs/prd.md` — R3 release row updated with full shipped scope, R3.1 and Mobile App rows added, R5 marked mostly shipped
+- `docs/solution-specification.md` — added Milestone Deliverables, Work Items, Bank Guarantees, Project Documents, Cash Flow, Mobile App Architecture sections
+- `docs/CHANGELOG.md` — this entry
+- `docs/lessons.md` — 6 new lessons from this session
+
 ### Added (2026-04-18 — R3 Execution Core)
 - **Project CRUD** — Project charter with code, BU, PM, sponsor, contract value, dates, location, category. Status workflow: DRAFT→ACTIVE→ON_HOLD→CLOSED. API: `CRUD /projects`. Angular: list page with BU/status/PM filters + detail page.
 - **Milestones** — name, deliverable, planned/actual dates, % of contract, invoice amount, status (NOT_STARTED→IN_PROGRESS→COMPLETED→INVOICED). API: `CRUD /projects/:id/milestones`.

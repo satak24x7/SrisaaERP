@@ -1,0 +1,7 @@
+{
+  "name": "govprojects-mobile",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular"
+}

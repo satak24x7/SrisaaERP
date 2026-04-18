@@ -62,15 +62,17 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 |---|---|---|
 | R1 Foundation | Company profile (org + statutory + docs + bank accounts), Statutory Registrations (password-protected), BU CRUD (BU Head dropdown), Users (multi-role), Roles, Configuration, Keycloak OIDC auth, Angular shell | **Shipped** |
 | R2 Sales Core | **CRM**: Account, Contact, Lead (convert), Opportunity (detail page, multi-contact, multi-influencer, owner, lookups), Government, Influencer, Lookup Lists. **Cost of Sale** (8 categories, spent/committed/projected). **Pipeline Dashboard** (weighted value, stage/BU charts). **Work Area**: Activities (Event/Task, calendar, polymorphic associations), Travel Plans (3-role workflow, inline expenses, reimbursement tracking, calendar integration), Password Manager (AES-256-GCM encrypted, personal/role/all sharing). | **Shipped** |
-| R3 Execution Core | Project CRUD (charter, code, BU, PM), Milestones, WBS/Tasks (hierarchical, Kanban), Budget (line-items), Inflow Plan, Cash Flow, PBG & Retention, Risks & Issues, Health Dashboard (RAG), Activity Panel | **Shipped** |
+| R3 Execution Core | Project CRUD (9-tab detail: Health, Overview, Activities, Work Items, Milestones, Budget, Bank Guarantees, Risks & Issues, Documents). Milestones with Deliverables (auto-complete). Work Items (renamed from Tasks in UI). Kanban Board (standalone + in-project). Budget line-items. Cash Flow (standalone page). Bank Guarantees (renamed from PBG). Risks & Issues. Health Dashboard (RAG). Project Dashboard. | **Shipped** |
+| R3.1 Execution Enhancements | 12 deferred items: auto-create from Opportunity, kanban swim-lanes/WIP, baseline schedule, resource plan, commitment accounting, EAC recompute, expense capture (needs R6), budget validation (needs R6), post-approval actuals (needs R6), variance alerts, board analytics, mobile updates (needs R10) | **Deferred** |
 | R4 Evaluation & Award | Bid evaluation 3 sub-stages, clarification log, award workflow + auto-handover, loss capture | |
-| R5 Financial Layer | Budgets, inflow plan, cash flow, PBG/retention | |
+| R5 Financial Layer | Budget, Inflow, Cash Flow, Bank Guarantees shipped in R3. Only Commitment Accounting pending (moved to R3.1). | **Mostly Shipped** |
 | R6 Expense Management | Full expense sheet lifecycle | |
 | R7 Material & Procurement | MR → PO → GRN → Issue | |
 | R8 Intelligence | BU portfolio, procurement, cash-flow dashboards | |
 | R9 Integrations | Accounting, banking, HRMS, SSO | |
-| R10 Org Masters & Hardening | Certifications, DSCs, Empanelments, Turnover, Past Projects, Employees, Expiry Dashboard, RBAC enforcement, Ionic mobile, Infra bootstrap, Dashboard page | |
+| R10 Org Masters & Hardening | Certifications, DSCs, Empanelments, Turnover, Past Projects, Employees, Expiry Dashboard, RBAC enforcement, Infra bootstrap, Dashboard page | |
 | R11 Tender Workflows | Managed Tenders (M1-M7), Go/No-Go Workflow, Bid Submission, DPR repository, Consortium tracker, Active Tender import | |
+| Mobile App | Ionic 7 + Capacitor. 3 tabs: Activities (list + create/edit), Calendar (month grid + day events), Travel Plans (list + detail + workflow). Keycloak OIDC auth. Android platform. Online only. | **Shipped** |
 
 MVP = R1 + R2 + R3 (Execution Core) + R4 (Evaluation & Award). Expense and Procurement are **fast-follows**, not optional. R10 items can be pulled into any release as needed.
 

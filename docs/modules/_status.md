@@ -2,7 +2,7 @@
 
 Tracks what's shipped, in progress, and queued. Claude Code should update this at the end of each feature.
 
-_Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opportunity CRM, Governments, Influencers, Lookup Lists, Opportunity detail page)_
+_Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Capacitor) scaffolded with Activities/Calendar/Travel Plans_
 
 ## Status legend
 
@@ -139,7 +139,7 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 | Employee master CRUD + UI | 🔲 | FR-1.9 — code, qualifications, skills, CV, availability |
 | Expiry dashboard | 🔲 | FR-1.13 — traffic lights across all validity-bearing records |
 | RBAC + BU-scope enforcement | 🔲 | Per-endpoint role gating via requireRole middleware |
-| Ionic mobile app shell | 🔲 | Shares auth + libs with web |
+| Ionic mobile app shell | 🟢 | Scaffolded at `apps/mobile/`. Angular 19 + Ionic 8 + Capacitor 6. 3 tabs: Activities, Calendar, Travel Plans. Keycloak OIDC auth. Android platform added, debug APK builds. Online only. |
 | Infra bootstrap script | 🔲 | MinIO bucket + RabbitMQ exchange/queue setup |
 | Dashboard page | 🔲 | Replace placeholder with actual stats/charts |
 

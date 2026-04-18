@@ -195,3 +195,31 @@ Format per entry: short rule, then **Why** (the incident) and **How to apply** (
 ### Travel Plan 3-role workflow: status transitions as a declarative map
 **Why:** Travel Plans have 8 statuses and multiple valid transitions (Requester submits, Approver approves/rejects, Admin manages booking). Separate endpoint per transition becomes unwieldy.
 **How to apply:** Define `VALID_TRANSITIONS` map (`status → [{to, action}]`). Single `POST /:id/:action` endpoint validates the transition against the map. Frontend sends the action name, API checks if it's valid for the current status. Cleaner than N separate endpoints.
+
+---
+
+## 2026-04-19 — R3 Execution Core + Mobile App
+
+### Rename UI labels but keep API paths stable
+**Why:** "Task" was renamed to "Work Item" in the project execution UI, and "PBG & Retention" to "Bank Guarantees." Changing API paths would break existing integrations and require frontend route updates.
+**How to apply:** Change display labels and Angular component names/titles freely. Keep API paths (`/tasks`, `/pbg-records`) unchanged. Add comments in the route file noting the UI-facing name differs.
+
+### Auto-complete parent entity when all children are done
+**Why:** Milestones should auto-complete when all their deliverables are done. Polling or manual toggle is error-prone.
+**How to apply:** In the deliverable update service, after marking a deliverable COMPLETED, query all sibling deliverables. If all are COMPLETED, update the parent milestone status to COMPLETED. Keep this logic in the service layer, not the route handler.
+
+### `originalPlannedDate` for baseline tracking — set once, never update
+**Why:** Milestones need baseline-vs-actual variance. If the planned date is editable, there's no baseline to compare against.
+**How to apply:** `Milestone.originalPlannedDate` is set during the project DRAFT to ACTIVE transition (copy `plannedDate` to `originalPlannedDate` for all milestones). Once set, the field is read-only. Variance = `actualDate - originalPlannedDate`.
+
+### Ionic + Capacitor: custom calendar is simpler than FullCalendar on mobile
+**Why:** FullCalendar's Angular wrapper is optimized for desktop. On mobile, a custom month grid with colored dots per day + a day-detail list below is more touch-friendly and lighter weight.
+**How to apply:** Build a simple grid component: 7 columns (days of week), rows for weeks. Each cell shows the day number + colored dots for events/tasks/travel. Tapping a day filters a list below. No need for the full FullCalendar dependency on mobile.
+
+### Ionic swipe actions need `ionItemSliding` with `ionItemOptions`
+**Why:** Mobile UX expects swipe-to-reveal actions (complete, edit, delete). Ionic provides this via `ion-item-sliding` wrapping `ion-item` + `ion-item-options`.
+**How to apply:** Wrap each list item in `<ion-item-sliding>`. Add `<ion-item-options side="end">` with `<ion-item-option>` buttons. Call `slidingItem.close()` after the action completes. Use `color="success"` for complete, `color="primary"` for edit.
+
+### Standalone Cash Flow page avoids deep nesting in project detail tabs
+**Why:** Cash Flow involves two sub-sections (Inflow Plan + Cash Flow Periods), each with their own CRUD. Nesting this inside a project detail tab created too many layers of UI (project detail > tab > sub-section > dialog).
+**How to apply:** For complex financial views that span a single project, consider a standalone page with a project selector dropdown instead of embedding in the project detail tabs. The project detail can link to it.
