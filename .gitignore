@@ -62,3 +62,9 @@ docker-data/
 
 # Local compose overrides (host-specific port remaps, extra services, etc.)
 docker-compose.override.yml
+
+# Prisma generated client (regenerated on install)
+node_modules/.prisma/
+
+# Claude Code plans
+.claude/plans/
