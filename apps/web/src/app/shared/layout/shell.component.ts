@@ -150,7 +150,14 @@ export class ShellComponent implements OnInit {
         { label: 'Opportunities', icon: 'pi pi-star', route: '/sales/opportunities' },
       ],
     },
-    { label: 'Projects', icon: 'pi pi-folder', route: '/projects' },
+    {
+      label: 'Projects',
+      icon: 'pi pi-folder',
+      expanded: true,
+      children: [
+        { label: 'All Projects', icon: 'pi pi-list', route: '/projects' },
+      ],
+    },
     { label: 'Expenses', icon: 'pi pi-wallet', route: '/expenses' },
     { label: 'Procurement', icon: 'pi pi-truck', route: '/procurement' },
     { label: 'Administration', icon: 'pi pi-sitemap', route: '/administration' },

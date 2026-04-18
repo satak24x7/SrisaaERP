@@ -258,6 +258,10 @@ model User {
   ledTravelPlans       TravelPlan[]           @relation("TravelLeader")
   travelMemberships    TravelPlanTraveller[]
   passwordEntries      PasswordEntry[]        @relation("PasswordOwner")
+  ownedTasks           Task[]                 @relation("TaskOwner")
+  effortLogs           TaskEffortLog[]        @relation("EffortLogger")
+  ownedRisks           Risk[]                 @relation("RiskOwner")
+  ownedIssues          Issue[]                @relation("IssueOwner")
 
   @@map("user")
 }
@@ -745,19 +749,23 @@ model CostOfSaleEntry {
 //            Award, LossRecord
 
 // ==========================================================================
-// Module 3 — Project Execution (stub; fill in per docs/modules/03-project-execution.md)
+// Module 3 — Project Execution
 // ==========================================================================
 
 model Project {
   id                 String   @id @db.VarChar(26)
+  projectCode        String?  @unique @map("project_code") @db.VarChar(32)
   businessUnitId     String   @map("business_unit_id") @db.VarChar(26)
   opportunityId      String?  @map("opportunity_id") @db.VarChar(26)
   name               String   @db.VarChar(255)
+  description        String?  @db.Text
   clientName         String   @map("client_name") @db.VarChar(255)
   workOrderRef       String?  @map("work_order_ref") @db.VarChar(128)
   contractValuePaise BigInt   @map("contract_value_paise")
   startDate          DateTime @map("start_date") @db.Date
   endDate            DateTime @map("end_date") @db.Date
+  location           String?  @db.VarChar(255)
+  category           String?  @db.VarChar(64) // from lookup "project_category"
   sponsorUserId      String?  @map("sponsor_user_id") @db.VarChar(26)
   projectManagerId   String   @map("project_manager_id") @db.VarChar(26)
   status             String   @default("DRAFT") @db.VarChar(32) // DRAFT | ACTIVE | ON_HOLD | CLOSED
@@ -771,26 +779,201 @@ model Project {
   businessUnit     BusinessUnit      @relation(fields: [businessUnitId], references: [id])
   opportunity      Opportunity?      @relation(fields: [opportunityId], references: [id])
   tasks            Task[]
+  milestones       Milestone[]
+  budget           Budget?
+  inflowPlanItems  InflowPlanItem[]
+  cashFlowPeriods  CashFlowPeriod[]
+  pbgRecords       PbgRecord[]
+  risks            Risk[]
+  issues           Issue[]
   expenseSheets    ExpenseSheet[]
   materialRequests MaterialRequest[]
 
   @@index([businessUnitId, status])
+  @@index([projectManagerId])
   @@map("project")
 }
 
+model Milestone {
+  id                String   @id @db.VarChar(26)
+  projectId         String   @map("project_id") @db.VarChar(26)
+  name              String   @db.VarChar(255)
+  description       String?  @db.Text
+  deliverable       String?  @db.VarChar(500)
+  plannedDate       DateTime @map("planned_date") @db.Date
+  actualDate        DateTime? @map("actual_date") @db.Date
+  percentOfContract Decimal? @map("percent_of_contract") @db.Decimal(5, 2)
+  invoiceAmountPaise BigInt?  @map("invoice_amount_paise")
+  status            String   @default("NOT_STARTED") @db.VarChar(32) // NOT_STARTED, IN_PROGRESS, COMPLETED, INVOICED
+  sortOrder         Int      @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project        Project          @relation(fields: [projectId], references: [id])
+  tasks          Task[]
+  inflowPlanItems InflowPlanItem[]
+
+  @@index([projectId, sortOrder])
+  @@map("milestone")
+}
+
 model Task {
-  id          String     @id @db.VarChar(26)
-  projectId   String     @map("project_id") @db.VarChar(26)
-  parentId    String?    @map("parent_id") @db.VarChar(26)
-  title       String     @db.VarChar(255)
-  description String?    @db.Text
-  status      TaskStatus @default(BACKLOG)
-  ownerId     String?    @map("owner_id") @db.VarChar(26)
-  estimateHours Decimal? @map("estimate_hours") @db.Decimal(8, 2)
-  actualHours Decimal?   @map("actual_hours") @db.Decimal(8, 2)
-  startDate   DateTime?  @map("start_date") @db.Date
-  endDate     DateTime?  @map("end_date") @db.Date
-  milestoneId String?    @map("milestone_id") @db.VarChar(26)
+  id            String     @id @db.VarChar(26)
+  projectId     String     @map("project_id") @db.VarChar(26)
+  parentId      String?    @map("parent_id") @db.VarChar(26)
+  milestoneId   String?    @map("milestone_id") @db.VarChar(26)
+  title         String     @db.VarChar(255)
+  description   String?    @db.Text
+  status        TaskStatus @default(BACKLOG)
+  priority      String     @default("MEDIUM") @db.VarChar(16) // LOW, MEDIUM, HIGH, CRITICAL
+  kanbanColumn  String     @default("BACKLOG") @map("kanban_column") @db.VarChar(32)
+  sortOrder     Int        @default(0) @map("sort_order")
+  labels        String?    @db.VarChar(500) // comma-separated
+  ownerId       String?    @map("owner_id") @db.VarChar(26)
+  estimateHours Decimal?   @map("estimate_hours") @db.Decimal(8, 2)
+  actualHours   Decimal?   @map("actual_hours") @db.Decimal(8, 2)
+  startDate     DateTime?  @map("start_date") @db.Date
+  endDate       DateTime?  @map("end_date") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project    Project        @relation(fields: [projectId], references: [id])
+  parent     Task?          @relation("TaskTree", fields: [parentId], references: [id])
+  children   Task[]         @relation("TaskTree")
+  milestone  Milestone?     @relation(fields: [milestoneId], references: [id])
+  owner      User?          @relation("TaskOwner", fields: [ownerId], references: [id])
+  effortLogs TaskEffortLog[]
+
+  @@index([projectId, status])
+  @@index([projectId, kanbanColumn])
+  @@index([ownerId, status])
+  @@map("task")
+}
+
+model TaskEffortLog {
+  id          String   @id @db.VarChar(26)
+  taskId      String   @map("task_id") @db.VarChar(26)
+  userId      String   @map("user_id") @db.VarChar(26)
+  logDate     DateTime @map("log_date") @db.Date
+  hours       Decimal  @db.Decimal(8, 2)
+  description String?  @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  task Task @relation(fields: [taskId], references: [id])
+  user User @relation("EffortLogger", fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@index([userId, logDate])
+  @@map("task_effort_log")
+}
+
+model Budget {
+  id                  String @id @db.VarChar(26)
+  projectId           String @unique @map("project_id") @db.VarChar(26)
+  totalEstimatedPaise BigInt  @default(0) @map("total_estimated_paise")
+  notes               String? @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project Project      @relation(fields: [projectId], references: [id])
+  lines   BudgetLine[]
+
+  @@map("budget")
+}
+
+model BudgetLine {
+  id              String @id @db.VarChar(26)
+  budgetId        String @map("budget_id") @db.VarChar(26)
+  category        String @db.VarChar(64) // MANPOWER, HARDWARE, LICENCES, SUBCONTRACT, TRAVEL, OVERHEADS, OTHER
+  description     String? @db.VarChar(500)
+  estimatedPaise  BigInt @default(0) @map("estimated_paise")
+  committedPaise  BigInt @default(0) @map("committed_paise")
+  actualPaise     BigInt @default(0) @map("actual_paise")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@index([budgetId])
+  @@map("budget_line")
+}
+
+model InflowPlanItem {
+  id              String    @id @db.VarChar(26)
+  projectId       String    @map("project_id") @db.VarChar(26)
+  milestoneId     String?   @map("milestone_id") @db.VarChar(26)
+  description     String    @db.VarChar(500)
+  invoiceDate     DateTime  @map("invoice_date") @db.Date
+  amountPaise     BigInt    @map("amount_paise")
+  gstPct          Decimal   @default(0) @map("gst_pct") @db.Decimal(5, 2)
+  retentionPct    Decimal   @default(0) @map("retention_pct") @db.Decimal(5, 2)
+  status          String    @default("PLANNED") @db.VarChar(32) // PLANNED, INVOICED, RECEIVED
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project   Project    @relation(fields: [projectId], references: [id])
+  milestone Milestone? @relation(fields: [milestoneId], references: [id])
+
+  @@index([projectId])
+  @@map("inflow_plan_item")
+}
+
+model CashFlowPeriod {
+  id                  String   @id @db.VarChar(26)
+  projectId           String   @map("project_id") @db.VarChar(26)
+  periodLabel         String   @map("period_label") @db.VarChar(16) // e.g. "2026-04"
+  periodStart         DateTime @map("period_start") @db.Date
+  periodEnd           DateTime @map("period_end") @db.Date
+  openingBalancePaise BigInt   @default(0) @map("opening_balance_paise")
+  billedPaise         BigInt   @default(0) @map("billed_paise")
+  receivedPaise       BigInt   @default(0) @map("received_paise")
+  outflowPaise        BigInt   @default(0) @map("outflow_paise")
+  closingBalancePaise BigInt   @default(0) @map("closing_balance_paise")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([projectId, periodLabel])
+  @@index([projectId])
+  @@map("cash_flow_period")
+}
+
+model PbgRecord {
+  id          String    @id @db.VarChar(26)
+  projectId   String    @map("project_id") @db.VarChar(26)
+  type        String    @db.VarChar(16) // PBG, RETENTION
+  description String    @db.VarChar(500)
+  amountPaise BigInt    @map("amount_paise")
+  bankName    String?   @map("bank_name") @db.VarChar(255)
+  bgNumber    String?   @map("bg_number") @db.VarChar(128)
+  issuedDate  DateTime? @map("issued_date") @db.Date
+  expiryDate  DateTime? @map("expiry_date") @db.Date
+  status      String    @default("ACTIVE") @db.VarChar(32) // ACTIVE, RELEASED, EXPIRED
+  releaseDate DateTime? @map("release_date") @db.Date
+  notes       String?   @db.Text
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -799,17 +982,58 @@ model Task {
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
   project Project @relation(fields: [projectId], references: [id])
-  parent  Task?   @relation("TaskTree", fields: [parentId], references: [id])
-  children Task[] @relation("TaskTree")
 
-  @@index([projectId, status])
-  @@index([ownerId, status])
-  @@map("task")
+  @@index([projectId])
+  @@index([expiryDate, status])
+  @@map("pbg_record")
 }
 
-// TODO(R4-R5): Milestone, WbsNode, TaskEffortLog, ResourceAllocation,
-//              Budget, BudgetLine, Commitment, InflowPlan, CashFlowPeriod,
-//              PbgRecord, RetentionRecord, Risk, Issue
+model Risk {
+  id          String  @id @db.VarChar(26)
+  projectId   String  @map("project_id") @db.VarChar(26)
+  title       String  @db.VarChar(255)
+  description String? @db.Text
+  probability String  @db.VarChar(16) // LOW, MEDIUM, HIGH
+  impact      String  @db.VarChar(16) // LOW, MEDIUM, HIGH
+  mitigation  String? @db.Text
+  status      String  @default("OPEN") @db.VarChar(32) // OPEN, MITIGATED, CLOSED
+  ownerId     String? @map("owner_id") @db.VarChar(26)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project Project @relation(fields: [projectId], references: [id])
+  owner   User?   @relation("RiskOwner", fields: [ownerId], references: [id])
+
+  @@index([projectId, status])
+  @@map("risk")
+}
+
+model Issue {
+  id          String  @id @db.VarChar(26)
+  projectId   String  @map("project_id") @db.VarChar(26)
+  title       String  @db.VarChar(255)
+  description String? @db.Text
+  severity    String  @db.VarChar(16) // LOW, MEDIUM, HIGH, CRITICAL
+  resolution  String? @db.Text
+  status      String  @default("OPEN") @db.VarChar(32) // OPEN, IN_PROGRESS, RESOLVED, CLOSED
+  ownerId     String? @map("owner_id") @db.VarChar(26)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  project Project @relation(fields: [projectId], references: [id])
+  owner   User?   @relation("IssueOwner", fields: [ownerId], references: [id])
+
+  @@index([projectId, status])
+  @@map("issue")
+}
 
 // ==========================================================================
 // Module 4 — Expense Management (stub; fill in per docs/modules/04-expense-management.md)

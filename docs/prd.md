@@ -62,8 +62,8 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 |---|---|---|
 | R1 Foundation | Company profile (org + statutory + docs + bank accounts), Statutory Registrations (password-protected), BU CRUD (BU Head dropdown), Users (multi-role), Roles, Configuration, Keycloak OIDC auth, Angular shell | **Shipped** |
 | R2 Sales Core | **CRM**: Account, Contact, Lead (convert), Opportunity (detail page, multi-contact, multi-influencer, owner, lookups), Government, Influencer, Lookup Lists. **Cost of Sale** (8 categories, spent/committed/projected). **Pipeline Dashboard** (weighted value, stage/BU charts). **Work Area**: Activities (Event/Task, calendar, polymorphic associations), Travel Plans (3-role workflow, inline expenses, reimbursement tracking, calendar integration), Password Manager (AES-256-GCM encrypted, personal/role/all sharing). | **Shipped** |
-| R3 Evaluation & Award | Bid evaluation 3 sub-stages, auto-handover | |
-| R4 Execution Core | Project, milestones, WBS, Kanban, basic expense capture | |
+| R3 Execution Core | Project CRUD (charter, code, BU, PM), Milestones, WBS/Tasks (hierarchical, Kanban), Budget (line-items), Inflow Plan, Cash Flow, PBG & Retention, Risks & Issues, Health Dashboard (RAG), Activity Panel | **Shipped** |
+| R4 Evaluation & Award | Bid evaluation 3 sub-stages, clarification log, award workflow + auto-handover, loss capture | |
 | R5 Financial Layer | Budgets, inflow plan, cash flow, PBG/retention | |
 | R6 Expense Management | Full expense sheet lifecycle | |
 | R7 Material & Procurement | MR → PO → GRN → Issue | |
@@ -72,7 +72,7 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 | R10 Org Masters & Hardening | Certifications, DSCs, Empanelments, Turnover, Past Projects, Employees, Expiry Dashboard, RBAC enforcement, Ionic mobile, Infra bootstrap, Dashboard page | |
 | R11 Tender Workflows | Managed Tenders (M1-M7), Go/No-Go Workflow, Bid Submission, DPR repository, Consortium tracker, Active Tender import | |
 
-MVP = R1 + R2 + R3 + R4. Expense and Procurement are **fast-follows**, not optional. R10 items can be pulled into any release as needed.
+MVP = R1 + R2 + R3 (Execution Core) + R4 (Evaluation & Award). Expense and Procurement are **fast-follows**, not optional. R10 items can be pulled into any release as needed.
 
 ## Priority scale
 

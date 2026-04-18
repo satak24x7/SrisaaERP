@@ -45,7 +45,23 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 | Travel Plans | 🟢 | 3-role workflow (Requester→Approver→Admin). Tickets, Hotels, Expenses (inline). Reimbursement tracking. Calendar integration. Polymorphic linked objects with per-object cost share. |
 | Password Manager | 🟢 | AES-256-GCM encrypted credentials. Personal/Role/All visibility. Security questions. Copy-to-clipboard. |
 
-## R3 — Evaluation & Award
+## R3 — Execution Core
+
+| Component | Status | Notes |
+|---|---|---|
+| Project CRUD + detail page | 🟢 | FR-3.1, 3.2, 3.23 — charter, BU-scoped, 8-tab detail page |
+| Milestones | 🟢 | FR-3.3 — payment schedule, deliverables, % of contract |
+| WBS + Tasks | 🟢 | FR-3.4, 3.6 — hierarchical, priority, kanban column, effort logging |
+| Kanban board | 🟢 | FR-3.5 — 6 fixed columns, CDK drag-drop, optimistic updates |
+| Budget | 🟢 | FR-3.10 — line-items: Estimated/Committed/Actual/Variance |
+| Inflow Plan | 🟢 | FR-3.12 — milestone-aligned invoicing, GST%, retention% |
+| Cash Flow | 🟢 | FR-3.13 — monthly periods, opening/billed/received/outflow/closing |
+| PBG & Retention | 🟢 | FR-3.18 — PBG/Retention records with expiry tracking |
+| Risks & Issues | 🟢 | FR-3.19 — risk register + issue register |
+| Health Dashboard | 🟢 | FR-3.20 — RAG status (schedule/budget/scope/overall) |
+| Activity Panel | 🟢 | Embedded on project detail overview tab |
+
+## R4 — Evaluation & Award
 
 | Component | Status | Notes |
 |---|---|---|
@@ -53,16 +69,6 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 | Clarification log | 🔲 | FR-2.15 |
 | Award workflow + auto-handover | 🔲 | FR-2.16 |
 | Loss capture | 🔲 | FR-2.17 |
-
-## R4 — Execution Core
-
-| Component | Status | Notes |
-|---|---|---|
-| Project charter + auto-create from win | 🔲 | FR-3.1, 3.2 |
-| Milestones | 🔲 | FR-3.3 |
-| WBS + tasks | 🔲 | FR-3.4 |
-| Kanban board | 🔲 | FR-3.5, 3.6 |
-| Basic expense capture (pre-full-module) | 🔲 | FR-3.15 |
 
 ## R5 — Financial Layer
 
@@ -134,8 +140,8 @@ _Last updated: 2026-04-18 — R2 Sales Core shipped (Account/Contact/Lead/Opport
 
 ## Next up (top of queue)
 
-1. **R3 Evaluation & Award** — Bid evaluation sub-stages, clarification log, award + auto-handover
-2. **R4 Execution Core** — Project charter, milestones, WBS, Kanban
+1. **R3 Execution Core** — Project charter, milestones, WBS, Kanban, basic expense capture
+2. **R4 Evaluation & Award** — Bid evaluation sub-stages, clarification log, award + auto-handover
 3. Pick items from **R10** (Org masters, RBAC, Expiry dashboard, Ionic mobile)
 4. **R11 Tender Workflows** — Managed Tenders, Go/No-Go, Bid Submission
 

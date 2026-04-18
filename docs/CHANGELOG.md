@@ -4,6 +4,21 @@ All notable changes to the GovProjects Platform. Based on [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added (2026-04-18 — R3 Execution Core)
+- **Project CRUD** — Project charter with code, BU, PM, sponsor, contract value, dates, location, category. Status workflow: DRAFT→ACTIVE→ON_HOLD→CLOSED. API: `CRUD /projects`. Angular: list page with BU/status/PM filters + detail page.
+- **Milestones** — name, deliverable, planned/actual dates, % of contract, invoice amount, status (NOT_STARTED→IN_PROGRESS→COMPLETED→INVOICED). API: `CRUD /projects/:id/milestones`.
+- **WBS + Tasks** — hierarchical (parent-child tree), priority (LOW/MEDIUM/HIGH/CRITICAL), kanban column, labels, owner, effort tracking. Tree view support (`?view=tree`). API: `CRUD /projects/:id/tasks`, `POST /:tid/move`, `POST /:tid/log-effort`.
+- **Kanban Board** — 6 fixed columns (Backlog/To Do/In Progress/Blocked/In Review/Done). CDK drag-drop. Cards show title, owner, priority tag, milestone, labels. Optimistic updates on move.
+- **Task Effort Logging** — log hours per task per day, auto-increment actualHours. API: `POST /tasks/:tid/log-effort`, `GET /tasks/:tid/effort-logs`.
+- **Budget** — one per project, line-items by category (Manpower/Hardware/Licences/Subcontract/Travel/Overheads/Other). Estimated/Committed/Actual/Variance tracking. API: `CRUD /projects/:id/budget[/lines]`.
+- **Inflow Plan** — milestone-aligned invoicing schedule with GST% and retention%. Status: PLANNED/INVOICED/RECEIVED. API: `CRUD /projects/:id/inflow-plan`.
+- **Cash Flow Periods** — monthly periods with opening/billed/received/outflow/closing balances. Unique by project+period. API: `CRUD /projects/:id/cash-flow`.
+- **PBG & Retention** — PBG/Retention records with bank, BG number, issued/expiry dates, status (ACTIVE/RELEASED/EXPIRED). API: `CRUD /projects/:id/pbg-records`.
+- **Risks & Issues** — Risk register (probability/impact/mitigation) + Issue register (severity/resolution). API: `CRUD /projects/:id/risks`, `CRUD /projects/:id/issues`.
+- **Health Dashboard** — computed RAG status for Schedule (milestone overdue%), Budget (utilization%), Scope (task completion%). Overall RAG = worst of three. API: `GET /projects/:id/health`.
+- **Project Detail Page** — 8-tab layout: Overview (metrics + activity panel), Milestones, Tasks (table/Kanban toggle), Budget, Cash Flow, PBG & Retention, Risks & Issues, Health.
+- **Prisma models**: Milestone, TaskEffortLog, Budget, BudgetLine, InflowPlanItem, CashFlowPeriod, PbgRecord, Risk, Issue. Enhanced Project (code, description, location, category) and Task (priority, kanbanColumn, sortOrder, labels).
+
 ### Added (2026-04-18 — Password Manager)
 - **Password Manager** — secure credential storage under Work Area → Passwords. AES-256-GCM encryption at rest for passwords and security question answers. Visibility: PERSONAL (owner only), ROLE (shared with a specific role), ALL (everyone). View dialog with reveal/copy buttons. Security questions with individually revealable answers. Only owner can edit/delete. API: `CRUD /passwords`. Schema: `PasswordEntry` + `PasswordSecurityQuestion`. Crypto helper: `apps/api/src/lib/crypto.ts`.
 

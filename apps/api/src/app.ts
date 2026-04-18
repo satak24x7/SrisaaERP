@@ -31,6 +31,7 @@ import { travelRouter } from './modules/travel/routes.js';
 import { passwordRouter } from './modules/password/routes.js';
 import { roleRouter } from './modules/admin/role/routes.js';
 import { userRouter } from './modules/admin/user/routes.js';
+import { projectRouter } from './modules/project/routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -104,6 +105,9 @@ export function createApp(): Express {
   app.use('/api/v1/users', userRouter);
   app.use('/api/v1/business-units', businessUnitRouter);
   app.use('/api/v1/business-units/:buId/members', buMembersRouter);
+
+  // Project Execution module
+  app.use('/api/v1/projects', projectRouter);
 
   // 404 + error handler (last)
   app.use(notFoundHandler);

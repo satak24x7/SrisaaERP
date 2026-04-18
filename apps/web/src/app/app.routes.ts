@@ -37,8 +37,8 @@ export const routes: Routes = [
       },
       {
         path: 'projects',
-        component: PlaceholderComponent,
-        data: { title: 'Projects', icon: 'pi pi-folder' },
+        loadChildren: () =>
+          import('./features/projects/projects.routes').then((m) => m.PROJECTS_ROUTES),
       },
       {
         path: 'expenses',
