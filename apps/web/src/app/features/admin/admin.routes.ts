@@ -42,4 +42,9 @@ export const ADMIN_ROUTES: Routes = [
     loadComponent: () =>
       import('./configuration.component').then((m) => m.ConfigurationComponent),
   },
+  {
+    path: 'mobile-usage',
+    loadComponent: () =>
+      import('./mobile-usage.component').then((m) => m.MobileUsageComponent),
+  },
 ];

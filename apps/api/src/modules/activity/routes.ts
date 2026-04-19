@@ -5,6 +5,7 @@ import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
+import { notify } from '../notification/service.js';
 
 const ACTIVITY_TYPES = ['EVENT', 'TASK'] as const;
 const TASK_STATUSES = ['OPEN', 'OVERDUE', 'CLOSED'] as const;
@@ -399,6 +400,23 @@ activityRouter.post(
 
     const row = await prisma.activity.findUniqueOrThrow({ where: { id: activityId }, include: ACTIVITY_INCLUDE });
     await recordAudit(req, { action: 'CREATE', resourceType: 'activity', resourceId: activityId, after: { subject: row.subject, activityType: row.activityType } });
+
+    // Notify assigned user (if different from creator)
+    if (body.userId && body.userId !== actor) {
+      const actorName = req.user?.fullName ?? 'Someone';
+      const typeLabel = body.activityType === 'TASK' ? 'task' : 'event';
+      await notify({
+        userId: body.userId,
+        title: `New ${typeLabel} assigned to you`,
+        body: `"${body.subject}" assigned by ${actorName}`,
+        type: 'ACTION',
+        category: 'ACTIVITY',
+        entityType: 'ACTIVITY',
+        entityId: activityId,
+        actionUrl: `/work-area/activities`,
+      });
+    }
+
     res.status(201).json({ data: activityToDto(row as unknown as Record<string, unknown>) });
   }),
 );

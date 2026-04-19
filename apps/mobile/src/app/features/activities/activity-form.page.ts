@@ -1,15 +1,16 @@
-import { Component, OnInit, inject, signal, effect } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder, FormGroup, FormControl, FormArray, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
   IonHeader,
   IonToolbar,
   IonTitle,
   IonContent,
-  IonBackButton,
   IonButtons,
   IonButton,
+  Platform,
   IonIcon,
   IonLabel,
   IonList,
@@ -19,9 +20,8 @@ import {
   IonSelect,
   IonSelectOption,
   IonDatetime,
-  IonDatetimeButton,
-  IonModal,
   IonToggle,
+  IonPopover,
   IonSegment,
   IonSegmentButton,
   IonNote,
@@ -34,11 +34,12 @@ import {
   addCircleOutline,
   trashOutline,
   closeCircleOutline,
+  arrowBackOutline,
 } from 'ionicons/icons';
 import { ActivityService } from '../../core/services/activity.service';
 import { LookupService } from '../../core/services/lookup.service';
 
-addIcons({ saveOutline, addCircleOutline, trashOutline, closeCircleOutline });
+addIcons({ saveOutline, addCircleOutline, trashOutline, closeCircleOutline, arrowBackOutline });
 
 interface Activity {
   id: string;
@@ -74,7 +75,6 @@ interface AssociationRow {
     IonToolbar,
     IonTitle,
     IonContent,
-    IonBackButton,
     IonButtons,
     IonButton,
     IonIcon,
@@ -86,9 +86,8 @@ interface AssociationRow {
     IonSelect,
     IonSelectOption,
     IonDatetime,
-    IonDatetimeButton,
-    IonModal,
     IonToggle,
+    IonPopover,
     IonSegment,
     IonSegmentButton,
     IonNote,
@@ -98,7 +97,9 @@ interface AssociationRow {
     <ion-header>
       <ion-toolbar color="primary">
         <ion-buttons slot="start">
-          <ion-back-button [defaultHref]="isEdit() ? '/tabs/activities/' + activityId() : '/tabs/activities'"></ion-back-button>
+          <ion-button (click)="goBack()">
+            <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
+          </ion-button>
         </ion-buttons>
         <ion-title>{{ isEdit() ? 'Edit Activity' : 'New Activity' }}</ion-title>
         <ion-buttons slot="end">
@@ -172,50 +173,53 @@ interface AssociationRow {
                 <ion-toggle formControlName="isAllDay" labelPlacement="start">All Day</ion-toggle>
               </ion-item>
 
-              <ion-item>
+              <ion-item button="true" id="start-trigger">
                 <ion-label>Start Date/Time</ion-label>
-                <ion-datetime-button datetime="startPicker"></ion-datetime-button>
+                <ion-note slot="end">{{ formatPickerValue(form.value.startDateTime, form.value.isAllDay) }}</ion-note>
               </ion-item>
-              <ion-modal [keepContentsMounted]="true">
+              <ion-popover trigger="start-trigger" [dismissOnSelect]="false" size="cover">
                 <ng-template>
                   <ion-datetime
-                    id="startPicker"
                     [presentation]="form.value.isAllDay ? 'date' : 'date-time'"
-                    formControlName="startDateTime"
+                    [value]="form.value.startDateTime || undefined"
+                    (ionChange)="onDateChange('startDateTime', $event)"
+                    [showDefaultButtons]="true"
                   ></ion-datetime>
                 </ng-template>
-              </ion-modal>
+              </ion-popover>
 
-              <ion-item>
+              <ion-item button="true" id="end-trigger">
                 <ion-label>End Date/Time</ion-label>
-                <ion-datetime-button datetime="endPicker"></ion-datetime-button>
+                <ion-note slot="end">{{ formatPickerValue(form.value.endDateTime, form.value.isAllDay) }}</ion-note>
               </ion-item>
-              <ion-modal [keepContentsMounted]="true">
+              <ion-popover trigger="end-trigger" [dismissOnSelect]="false" size="cover">
                 <ng-template>
                   <ion-datetime
-                    id="endPicker"
                     [presentation]="form.value.isAllDay ? 'date' : 'date-time'"
-                    formControlName="endDateTime"
+                    [value]="form.value.endDateTime || undefined"
+                    (ionChange)="onDateChange('endDateTime', $event)"
+                    [showDefaultButtons]="true"
                   ></ion-datetime>
                 </ng-template>
-              </ion-modal>
+              </ion-popover>
             }
 
             <!-- TASK fields -->
             @if (activityType() === 'TASK') {
-              <ion-item>
+              <ion-item button="true" id="due-trigger">
                 <ion-label>Due Date/Time</ion-label>
-                <ion-datetime-button datetime="duePicker"></ion-datetime-button>
+                <ion-note slot="end">{{ formatPickerValue(form.value.dueDateTime, false) }}</ion-note>
               </ion-item>
-              <ion-modal [keepContentsMounted]="true">
+              <ion-popover trigger="due-trigger" [dismissOnSelect]="false" size="cover">
                 <ng-template>
                   <ion-datetime
-                    id="duePicker"
                     presentation="date-time"
-                    formControlName="dueDateTime"
+                    [value]="form.value.dueDateTime || undefined"
+                    (ionChange)="onDateChange('dueDateTime', $event)"
+                    [showDefaultButtons]="true"
                   ></ion-datetime>
                 </ng-template>
-              </ion-modal>
+              </ion-popover>
 
               @if (isEdit()) {
                 <ion-item>
@@ -306,13 +310,17 @@ interface AssociationRow {
     </ion-content>
   `,
 })
-export class ActivityFormPage implements OnInit {
+export class ActivityFormPage implements OnInit, OnDestroy {
   private readonly fb = inject(FormBuilder);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly platform = inject(Platform);
   private readonly activityService = inject(ActivityService);
   private readonly lookupService = inject(LookupService);
   private readonly toastCtrl = inject(ToastController);
+
+  private returnUrl = '/tabs/activities';
+  private backButtonSub?: Subscription;
 
   readonly isEdit = signal(false);
   readonly activityId = signal('');
@@ -340,6 +348,13 @@ export class ActivityFormPage implements OnInit {
   }
 
   ngOnInit(): void {
+    this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl') || '/tabs/activities';
+
+    // Handle Android hardware back button
+    this.backButtonSub = this.platform.backButton.subscribeWithPriority(10, () => {
+      this.goBack();
+    });
+
     // Load lookup data
     this.lookupService.loadAll().subscribe({
       next: () => {
@@ -420,6 +435,40 @@ export class ActivityFormPage implements OnInit {
     return this.associations.at(index).controls.entityId;
   }
 
+  ngOnDestroy(): void {
+    this.backButtonSub?.unsubscribe();
+  }
+
+  goBack(): void {
+    if (this.isEdit()) {
+      // Go back to detail page, preserving the return URL
+      this.router.navigate(['/tabs/activities', this.activityId()], {
+        queryParams: { returnUrl: this.returnUrl },
+      });
+    } else {
+      this.router.navigate([this.returnUrl]);
+    }
+  }
+
+  onDateChange(field: 'startDateTime' | 'endDateTime' | 'dueDateTime', event: CustomEvent): void {
+    const val = event.detail.value as string;
+    if (val) {
+      this.form.controls[field].setValue(val);
+    }
+  }
+
+  formatPickerValue(value: string | undefined | null, allDay: boolean | undefined): string {
+    if (!value) return 'Select';
+    try {
+      const d = new Date(value);
+      return allDay
+        ? d.toLocaleDateString()
+        : d.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+    } catch {
+      return 'Select';
+    }
+  }
+
   async save(): Promise<void> {
     if (this.form.invalid) return;
     this.saving.set(true);
@@ -461,7 +510,7 @@ export class ActivityFormPage implements OnInit {
           position: 'bottom',
         });
         await toast.present();
-        this.router.navigate(['/tabs/activities']);
+        this.router.navigate([this.returnUrl]);
       },
       error: async () => {
         this.saving.set(false);

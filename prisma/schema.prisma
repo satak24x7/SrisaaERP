@@ -262,6 +262,9 @@ model User {
   effortLogs           TaskEffortLog[]        @relation("EffortLogger")
   ownedRisks           Risk[]                 @relation("RiskOwner")
   ownedIssues          Issue[]                @relation("IssueOwner")
+  appDevices           AppDevice[]
+  appUsageDaily        AppUsageDaily[]
+  notifications        Notification[]
 
   @@map("user")
 }
@@ -695,6 +698,8 @@ model Opportunity {
   managedTenderId    String?           @map("managed_tender_id") @db.VarChar(26)
   activeTenderId     String?           @map("active_tender_id") @db.VarChar(26)
   submissionDue      DateTime?         @map("submission_due") @db.Date
+  closedStatus       String?           @map("closed_status") @db.VarChar(64)
+  tenderReleased     Boolean           @default(false) @map("tender_released")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -711,10 +716,111 @@ model Opportunity {
   opportunityContacts    OpportunityContact[]
   opportunityInfluencers OpportunityInfluencer[]
   costOfSaleEntries      CostOfSaleEntry[]
+  tender                 Tender?
 
   @@index([businessUnitId, stage, createdAt])
   @@index([accountId])
+  @@index([closedStatus])
   @@map("opportunity")
+}
+
+// ==========================================================================
+// Tender — linked to Opportunity (Indian Government Tender Standards)
+// ==========================================================================
+
+model Tender {
+  id                    String   @id @db.VarChar(26)
+  opportunityId         String   @unique @map("opportunity_id") @db.VarChar(26)
+
+  // Tender Identity
+  tenderNumber          String   @map("tender_number") @db.VarChar(128)     // NIT/RFP/EOI number
+  tenderTitle           String?  @map("tender_title") @db.VarChar(500)
+  referenceNumber       String?  @map("reference_number") @db.VarChar(128)  // Internal ref / file number
+  publishingAuthority   String?  @map("publishing_authority") @db.VarChar(255) // Issuing dept/org
+  publishingDepartment  String?  @map("publishing_department") @db.VarChar(255)
+
+  // Classification
+  tenderType            String   @map("tender_type") @db.VarChar(32)       // OPEN / LIMITED / SINGLE_SOURCE / EOI / REVERSE_AUCTION
+  tenderCategory        String?  @map("tender_category") @db.VarChar(32)   // WORKS / GOODS / SERVICES / CONSULTANCY
+  procurementMode       String?  @map("procurement_mode") @db.VarChar(32)  // ICB / NCB / SHOPPING / DIRECT
+
+  // Portal
+  portalName            String?  @map("portal_name") @db.VarChar(64)       // GeM / CPPP / STATE_PORTAL / DEPARTMENT / OTHER
+  portalTenderId        String?  @map("portal_tender_id") @db.VarChar(128) // Portal-specific ID
+  portalUrl             String?  @map("portal_url") @db.VarChar(512)       // Link to tender on portal
+
+  // Financial
+  estimatedValuePaise   BigInt?  @map("estimated_value_paise")             // Estimated project cost
+  emdAmountPaise        BigInt?  @map("emd_amount_paise")                  // Earnest Money Deposit
+  emdMode               String?  @map("emd_mode") @db.VarChar(64)         // BG / DD / FDR / ONLINE / EXEMPTED
+  tenderFeePaise        BigInt?  @map("tender_fee_paise")
+  documentCostPaise     BigInt?  @map("document_cost_paise")
+
+  // Key Dates
+  publishDate           DateTime? @map("publish_date") @db.Date
+  preBidMeetingDate     DateTime? @map("pre_bid_meeting_date") @db.DateTime(0)
+  clarificationDeadline DateTime? @map("clarification_deadline") @db.DateTime(0)
+  submissionDeadlineOnline  DateTime? @map("submission_deadline_online") @db.DateTime(0)
+  submissionDeadlinePhysical DateTime? @map("submission_deadline_physical") @db.DateTime(0)
+  technicalOpeningDate  DateTime? @map("technical_opening_date") @db.DateTime(0)
+  financialOpeningDate  DateTime? @map("financial_opening_date") @db.DateTime(0)
+
+  // Terms
+  bidValidityDays       Int?     @map("bid_validity_days")
+  completionPeriodDays  Int?     @map("completion_period_days")
+  projectLocation       String?  @map("project_location") @db.VarChar(255)
+
+  // Eligibility
+  eligibilityCriteria   String?  @map("eligibility_criteria") @db.Text      // Key eligibility notes
+  turnoverRequirementPaise BigInt? @map("turnover_requirement_paise")       // Min annual turnover
+  experienceYears       Int?     @map("experience_years")                   // Min years of experience
+  similarWorkValuePaise BigInt?  @map("similar_work_value_paise")           // Min value of similar work done
+
+  // Status
+  tenderStatus          String   @default("PUBLISHED") @map("tender_status") @db.VarChar(32)
+  // PUBLISHED / CORRIGENDUM / PREBID_DONE / SUBMISSION_CLOSED / TECH_OPENED / FIN_OPENED / AWARDED / CANCELLED
+
+  notes                 String?  @db.Text
+  corrigendumDetails    String?  @map("corrigendum_details") @db.Text
+  aiAnalysis            Json?    @map("ai_analysis")          // Gemini-generated RFP analysis
+  aiAnalyzedAt          DateTime? @map("ai_analyzed_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id])
+  documents   TenderDocument[]
+
+  @@index([tenderNumber])
+  @@index([tenderStatus])
+  @@index([submissionDeadlineOnline])
+  @@map("tender")
+}
+
+model TenderDocument {
+  id           String  @id @db.VarChar(26)
+  tenderId     String  @map("tender_id") @db.VarChar(26)
+  name         String  @db.VarChar(255)          // display name
+  docType      String  @map("doc_type") @db.VarChar(32) // RFP, CORRIGENDUM, ADDENDUM, BOQ, DRAWING, PRE_BID_MINUTES, CLARIFICATION, OTHER
+  fileName     String  @map("file_name") @db.VarChar(255)
+  mimeType     String  @map("mime_type") @db.VarChar(128)
+  fileSize     Int     @map("file_size")
+  storagePath  String  @map("storage_path") @db.VarChar(512)
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  tender Tender @relation(fields: [tenderId], references: [id])
+
+  @@index([tenderId, docType, sortOrder])
+  @@map("tender_document")
 }
 
 // ==========================================================================
@@ -1585,4 +1691,70 @@ model PasswordSecurityQuestion {
 
   @@index([passwordEntryId])
   @@map("password_security_question")
+}
+
+// ==========================================================================
+// App Usage Tracking
+// ==========================================================================
+
+model AppDevice {
+  id         String  @id @db.VarChar(26)
+  userId     String  @map("user_id") @db.VarChar(26)
+  platform   String  @db.VarChar(16) // ANDROID, IOS, WEB
+  deviceId   String  @map("device_id") @db.VarChar(128)
+  appVersion String? @map("app_version") @db.VarChar(32)
+  isActive   Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@map("app_device")
+}
+
+model AppUsageDaily {
+  id            String   @id @db.VarChar(26)
+  userId        String   @map("user_id") @db.VarChar(26)
+  usageDate     DateTime @map("usage_date") @db.Date
+  activeSeconds Int      @default(0) @map("active_seconds")
+  sessionCount  Int      @default(0) @map("session_count")
+  lastSeenAt    DateTime @map("last_seen_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([userId, usageDate])
+  @@index([userId, usageDate])
+  @@index([lastSeenAt])
+  @@map("app_usage_daily")
+}
+
+// ==========================================================================
+// In-App Notifications
+// ==========================================================================
+
+model Notification {
+  id         String   @id @db.VarChar(26)
+  userId     String   @map("user_id") @db.VarChar(26)
+  title      String   @db.VarChar(255)
+  body       String?  @db.VarChar(1000)
+  type       String   @db.VarChar(32) // INFO, ACTION, WARNING, SUCCESS
+  category   String   @db.VarChar(64) // TRAVEL, ACTIVITY, PROJECT, EXPENSE, SYSTEM
+  isRead     Boolean  @default(false) @map("is_read")
+  entityType String?  @map("entity_type") @db.VarChar(32) // TRAVEL_PLAN, ACTIVITY, PROJECT, etc.
+  entityId   String?  @map("entity_id") @db.VarChar(26)
+  actionUrl  String?  @map("action_url") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notification")
 }

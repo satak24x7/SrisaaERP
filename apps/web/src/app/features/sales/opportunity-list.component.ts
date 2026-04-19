@@ -16,7 +16,7 @@ import { environment } from '../../../environments/environment';
 
 interface InfluencerRef { id: string; name: string; rating: number | null; }
 interface Opportunity {
-  id: string; title: string; stage: string; entryPath: string;
+  id: string; title: string; stage: string; entryPath: string; closedStatus: string | null;
   contractValuePaise: number | null; accountName: string | null;
   endClientName: string | null; businessUnitName: string | null;
   influencers: InfluencerRef[]; createdAt: string;

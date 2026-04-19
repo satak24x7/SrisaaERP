@@ -3,6 +3,19 @@ import type { UserDto } from './types.js';
 import { errors } from '../../../middleware/error-handler.js';
 import { userRepo } from './repository.js';
 import { toDto } from './types.js';
+import { createKeycloakUser, updateKeycloakUser, disableKeycloakUser, syncKeycloakRoles } from '../../../lib/keycloak-admin.js';
+import { prisma } from '../../../lib/prisma.js';
+import { logger } from '../../../lib/logger.js';
+
+/** Resolve app role IDs to role names for Keycloak sync */
+async function resolveRoleNames(roleIds: string[]): Promise<string[]> {
+  if (roleIds.length === 0) return [];
+  const roles = await prisma.role.findMany({
+    where: { id: { in: roleIds } },
+    select: { name: true },
+  });
+  return roles.map((r) => r.name);
+}
 
 export interface PaginatedUsers {
   data: UserDto[];
@@ -66,14 +79,37 @@ export const userService = {
 
   async create(input: CreateUserInput): Promise<UserDto> {
     await assertEmailUnique(input.email);
+
+    // Auto-create Keycloak account (email as username, default password Test@1234)
+    let externalId = input.externalId;
+    if (!externalId || externalId === 'pending') {
+      try {
+        externalId = await createKeycloakUser({ email: input.email, fullName: input.fullName });
+      } catch (err) {
+        logger.error({ err, email: input.email }, 'Failed to create Keycloak account — continuing with placeholder externalId');
+        externalId = `pending_${Date.now()}`;
+      }
+    }
+
     const row = await userRepo.create({
       email: input.email,
       fullName: input.fullName,
-      externalId: input.externalId,
+      externalId,
       phone: input.phone,
       status: input.status,
       roleIds: input.roleIds,
     });
+
+    // Sync roles to Keycloak
+    if (input.roleIds && input.roleIds.length > 0 && externalId && !externalId.startsWith('pending')) {
+      try {
+        const roleNames = await resolveRoleNames(input.roleIds);
+        await syncKeycloakRoles(externalId, roleNames);
+      } catch (err) {
+        logger.warn({ err, email: input.email }, 'Failed to sync roles to Keycloak on create');
+      }
+    }
+
     return toDto(row);
   },
 
@@ -87,6 +123,34 @@ export const userService = {
       await assertEmailUnique(input.email, id);
     }
     const row = await userRepo.update(id, input);
+
+    // Sync changes to Keycloak
+    if (existing.externalId && !existing.externalId.startsWith('pending')) {
+      // Sync name/email
+      const needsProfileSync = (input.email && input.email !== existing.email) ||
+                               (input.fullName && input.fullName !== existing.fullName);
+      if (needsProfileSync) {
+        try {
+          await updateKeycloakUser(existing.externalId, {
+            email: input.email,
+            fullName: input.fullName,
+          });
+        } catch (err) {
+          logger.warn({ err, userId: id }, 'Failed to sync user profile to Keycloak');
+        }
+      }
+
+      // Sync roles
+      if (input.roleIds !== undefined) {
+        try {
+          const roleNames = await resolveRoleNames(input.roleIds);
+          await syncKeycloakRoles(existing.externalId, roleNames);
+        } catch (err) {
+          logger.warn({ err, userId: id }, 'Failed to sync roles to Keycloak');
+        }
+      }
+    }
+
     return { before: toDto(existing), after: toDto(row) };
   },
 
@@ -94,6 +158,16 @@ export const userService = {
     const existing = await userRepo.findById(id);
     if (!existing) throw errors.notFound('User not found');
     const row = await userRepo.softDelete(id);
+
+    // Disable Keycloak account
+    if (existing.externalId && !existing.externalId.startsWith('pending')) {
+      try {
+        await disableKeycloakUser(existing.externalId);
+      } catch (err) {
+        logger.warn({ err, userId: id }, 'Failed to disable Keycloak account');
+      }
+    }
+
     return toDto({ ...row, userRoles: [], buMemberships: [] });
   },
 };

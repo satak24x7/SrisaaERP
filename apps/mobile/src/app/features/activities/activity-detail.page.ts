@@ -1,6 +1,8 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
-import { CommonModule, Location } from '@angular/common';
+import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
+import { Platform } from '@ionic/angular/standalone';
+import { Subscription } from 'rxjs';
 import {
   IonHeader,
   IonToolbar,
@@ -248,25 +250,39 @@ interface Activity {
     }
   `,
 })
-export class ActivityDetailPage implements OnInit {
+export class ActivityDetailPage implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
-  private readonly location = inject(Location);
+  private readonly platform = inject(Platform);
   private readonly activityService = inject(ActivityService);
   private readonly alertCtrl = inject(AlertController);
+
+  private returnUrl = '/tabs/activities';
+  private backButtonSub?: Subscription;
 
   readonly activity = signal<Activity | null>(null);
   readonly loading = signal(false);
 
-  goBack(): void {
-    this.location.back();
-  }
-
   ngOnInit(): void {
+    this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl') || '/tabs/activities';
+
+    // Handle Android hardware back button
+    this.backButtonSub = this.platform.backButton.subscribeWithPriority(10, () => {
+      this.goBack();
+    });
+
     const id = this.route.snapshot.paramMap.get('id');
     if (id) {
       this.loadActivity(id);
     }
+  }
+
+  ngOnDestroy(): void {
+    this.backButtonSub?.unsubscribe();
+  }
+
+  goBack(): void {
+    this.router.navigate([this.returnUrl]);
   }
 
   private loadActivity(id: string): void {
@@ -286,7 +302,9 @@ export class ActivityDetailPage implements OnInit {
   editActivity(): void {
     const a = this.activity();
     if (a) {
-      this.router.navigate(['/tabs/activities', a.id, 'edit']);
+      this.router.navigate(['/tabs/activities', a.id, 'edit'], {
+        queryParams: { returnUrl: this.returnUrl },
+      });
     }
   }
 
@@ -313,7 +331,7 @@ export class ActivityDetailPage implements OnInit {
           role: 'destructive',
           handler: () => {
             this.activityService.delete(a.id).subscribe({
-              next: () => this.router.navigate(['/tabs/activities']),
+              next: () => this.router.navigate([this.returnUrl]),
             });
           },
         },

@@ -171,6 +171,9 @@ importers:
       '@capacitor/core':
         specifier: ^6.0.0
         version: 6.2.1
+      '@capacitor/device':
+        specifier: ^6
+        version: 6.0.3(@capacitor/core@6.2.1)
       '@capacitor/splash-screen':
         specifier: ^6.0.0
         version: 6.0.4(@capacitor/core@6.2.1)
@@ -1150,6 +1153,11 @@ packages:
 
   '@capacitor/core@6.2.1':
     resolution: {integrity: sha512-urZwxa7hVE/BnA18oCFAdizXPse6fCKanQyEqpmz6cBJ2vObwMpyJDG5jBeoSsgocS9+Ax+9vb4ducWJn0y2qQ==}
+
+  '@capacitor/device@6.0.3':
+    resolution: {integrity: sha512-AmPtVuWeW31Ui+UMIl5zgCzwMU4fL4hIvYYvbAhXXyKWjxi1nk+CAh9B3k4OYUQLJI5nan0PoJ4GiiJ7x6DT/A==}
+    peerDependencies:
+      '@capacitor/core': ^6.0.0
 
   '@capacitor/splash-screen@6.0.4':
     resolution: {integrity: sha512-uJXR+28cdaie7zIIUBvgkWgHim6Gr1itJym9voIMTmrjXkOaPtejwxYJsdQWPJz9zgGnSbXuC1mNNibLgv3OpQ==}
@@ -7356,6 +7364,10 @@ snapshots:
   '@capacitor/core@6.2.1':
     dependencies:
       tslib: 2.8.1
+
+  '@capacitor/device@6.0.3(@capacitor/core@6.2.1)':
+    dependencies:
+      '@capacitor/core': 6.2.1
 
   '@capacitor/splash-screen@6.0.4(@capacitor/core@6.2.1)':
     dependencies:

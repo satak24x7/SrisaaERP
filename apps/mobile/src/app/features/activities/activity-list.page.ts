@@ -196,7 +196,7 @@ export class ActivityListPage implements OnInit {
   readonly activities = signal<Activity[]>([]);
   readonly loading = signal(false);
   readonly activeTab = signal('all');
-  readonly myItems = signal(true);
+  readonly myItems = signal(false);
 
   ngOnInit(): void {
     this.loadActivities();

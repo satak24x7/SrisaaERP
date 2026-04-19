@@ -5,6 +5,8 @@ const config: CapacitorConfig = {
   appName: 'GovProjects',
   webDir: 'dist/mobile/browser',
   server: {
+    // Use http to avoid mixed-content blocking when calling http:// API/Keycloak
+    androidScheme: 'http',
     cleartext: true,
   },
   plugins: {

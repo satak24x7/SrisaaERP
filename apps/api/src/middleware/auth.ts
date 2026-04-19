@@ -16,7 +16,7 @@ export interface AuthenticatedUser {
 }
 
 // ---------------------------------------------------------------------------
-// JWKS setup
+// JWKS setup — support primary issuer + LAN/alternate aliases
 // ---------------------------------------------------------------------------
 
 const JWKS_URL = new URL(
@@ -24,6 +24,14 @@ const JWKS_URL = new URL(
 );
 
 const jwks = createRemoteJWKSet(JWKS_URL);
+
+// All accepted issuer values (primary + aliases like LAN IP for mobile)
+const ACCEPTED_ISSUERS: string[] = [env.JWT_ISSUER];
+if (env.JWT_ISSUER_ALIASES) {
+  for (const alias of env.JWT_ISSUER_ALIASES.split(',').map((s) => s.trim())) {
+    if (alias) ACCEPTED_ISSUERS.push(alias);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Claim extraction
@@ -132,7 +140,7 @@ export async function authMiddleware(
 
   try {
     const { payload } = await jwtVerify(token, jwks, {
-      issuer: env.JWT_ISSUER,
+      issuer: ACCEPTED_ISSUERS,
       audience: env.JWT_AUDIENCE,
     });
 

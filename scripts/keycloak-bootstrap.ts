@@ -364,11 +364,13 @@ async function main(): Promise<void> {
     redirectUris: [
       'http://localhost:4200/*',
       'http://localhost:8100/*', // Ionic
+      'https://localhost/*',    // Capacitor 6 Android WebView
       'capacitor://localhost/*',
     ],
     webOrigins: [
       'http://localhost:4200',
       'http://localhost:8100',
+      'https://localhost',      // Capacitor 6 Android WebView
     ],
     directAccessGrantsEnabled: true,
   });

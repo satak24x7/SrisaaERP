@@ -118,10 +118,11 @@ export class DayEventsComponent {
   }
 
   onEventTap(event: CalendarEvent): void {
+    const returnUrl = '/tabs/calendar';
     if (event.type === 'TRAVEL') {
-      this.router.navigate(['/tabs/travels', event.id]);
+      this.router.navigate(['/tabs/travels', event.id], { queryParams: { returnUrl } });
     } else {
-      this.router.navigate(['/tabs/activities', event.id]);
+      this.router.navigate(['/tabs/activities', event.id], { queryParams: { returnUrl } });
     }
   }
 

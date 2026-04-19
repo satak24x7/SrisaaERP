@@ -32,6 +32,9 @@ import { passwordRouter } from './modules/password/routes.js';
 import { roleRouter } from './modules/admin/role/routes.js';
 import { userRouter } from './modules/admin/user/routes.js';
 import { projectRouter } from './modules/project/routes.js';
+import { appUsageRouter } from './modules/app-usage/routes.js';
+import { notificationRouter } from './modules/notification/routes.js';
+import { tenderListRouter } from './modules/tender/routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -108,6 +111,15 @@ export function createApp(): Express {
 
   // Project Execution module
   app.use('/api/v1/projects', projectRouter);
+
+  // App Usage tracking
+  app.use('/api/v1/app-usage', appUsageRouter);
+
+  // Notifications
+  app.use('/api/v1/notifications', notificationRouter);
+
+  // Bid Management
+  app.use('/api/v1/tenders', tenderListRouter);
 
   // 404 + error handler (last)
   app.use(notFoundHandler);

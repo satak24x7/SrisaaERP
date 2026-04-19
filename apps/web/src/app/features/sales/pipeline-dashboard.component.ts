@@ -23,7 +23,14 @@ interface OppRow {
 interface PipelineData {
   summary: { totalOpportunities: number; totalContractValuePaise: number; weightedPipelineValuePaise: number };
   byStage: Array<{ stage: string; count: number; totalValuePaise: number; weightedValuePaise: number }>;
-  byBu: Array<{ buId: string; buName: string; count: number; totalValuePaise: number }>;
+  byBu: Array<{ buId: string; buName: string; count: number; totalValuePaise: number; weightedValuePaise: number }>;
+  opportunities: OppRow[];
+}
+interface OrdersData {
+  summary: { totalOrders: number; totalValuePaise: number };
+  byBu: Array<{ buName: string; count: number; totalValuePaise: number }>;
+  byMonth: Array<{ month: string; count: number; totalValuePaise: number }>;
+  byMonthBu: Array<{ month: string; buName: string; totalValuePaise: number }>;
   opportunities: OppRow[];
 }
 
@@ -77,27 +84,63 @@ interface PipelineData {
         </div>
       </div>
 
-      <!-- Charts -->
-      @if (pipeline()!.byStage.length > 0) {
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h3 class="text-md font-semibold text-gray-700 mb-4">Pipeline by Stage</h3>
+      <!-- Charts Row 1: Pipeline by Stage + Weighted Pipeline by BU -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 class="text-md font-semibold text-gray-700 mb-4">Pipeline by Stage</h3>
+          @if (pipeline()!.byStage.length > 0) {
             <p-chart type="bar" [data]="stageChartData()" [options]="barOptions" height="300px" />
+          } @else {
+            <div class="text-gray-400 text-center py-12">No data</div>
+          }
+        </div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 class="text-md font-semibold text-gray-700 mb-4">Weighted Pipeline by Business Unit</h3>
+          @if (pipeline()!.byBu.length > 0) {
+            <p-chart type="pie" [data]="weightedBuChartData()" [options]="doughnutOptions" height="300px" />
+          } @else {
+            <div class="text-gray-400 text-center py-12">No data</div>
+          }
+        </div>
+      </div>
+
+      <!-- Charts Row 2: Pipeline by BU + Orders Booked (last 12 months by BU) -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 class="text-md font-semibold text-gray-700 mb-4">Pipeline Value by Business Unit</h3>
+          @if (pipeline()!.byBu.length > 0) {
+            <p-chart type="doughnut" [data]="buChartData()" [options]="doughnutOptions" height="300px" />
+          } @else {
+            <div class="text-gray-400 text-center py-12">No data</div>
+          }
+        </div>
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 class="text-md font-semibold text-gray-700 mb-4">Orders Booked — Last 12 Months by BU</h3>
+          @if (orders() && orders()!.byMonthBu.length > 0) {
+            <p-chart type="bar" [data]="ordersStackedChartData()" [options]="stackedBarOptions" height="300px" />
+          } @else {
+            <div class="text-gray-400 text-center py-12">No orders booked yet</div>
+          }
+        </div>
+      </div>
+
+      <!-- Summary: Orders Booked -->
+      @if (orders() && orders()!.summary.totalOrders > 0) {
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div class="text-sm text-gray-500 font-medium">Total Orders Won</div>
+            <div class="text-3xl font-bold text-gray-800 mt-1">{{ orders()!.summary.totalOrders }}</div>
           </div>
           <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            <h3 class="text-md font-semibold text-gray-700 mb-4">Pipeline by Business Unit</h3>
-            @if (pipeline()!.byBu.length > 0) {
-              <p-chart type="doughnut" [data]="buChartData()" [options]="doughnutOptions" height="300px" />
-            } @else {
-              <div class="text-gray-400 text-center py-12">No data</div>
-            }
+            <div class="text-sm text-gray-500 font-medium">Total Order Value</div>
+            <div class="text-3xl font-bold text-emerald-700 mt-1">{{ formatCrores(orders()!.summary.totalValuePaise) }}</div>
           </div>
         </div>
       }
 
       <!-- Opportunities Table -->
       <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h3 class="text-md font-semibold text-gray-700 mb-4">Opportunities</h3>
+        <h3 class="text-md font-semibold text-gray-700 mb-4">Active Opportunities</h3>
         <p-table [value]="pipeline()!.opportunities" styleClass="p-datatable-sm" [paginator]="true" [rows]="20" [rowsPerPageOptions]="[10,20,50]">
           <ng-template pTemplate="header">
             <tr>
@@ -132,6 +175,7 @@ export class PipelineDashboardComponent implements OnInit {
   private readonly router = inject(Router);
 
   pipeline = signal<PipelineData | null>(null);
+  orders = signal<OrdersData | null>(null);
   loading = signal(true);
 
   buOptions = signal<Ref[]>([]);
@@ -150,6 +194,15 @@ export class PipelineDashboardComponent implements OnInit {
 
   doughnutOptions = {
     plugins: { legend: { position: 'bottom' as const } },
+    maintainAspectRatio: false,
+  };
+
+  stackedBarOptions = {
+    plugins: { legend: { position: 'bottom' as const } },
+    scales: {
+      x: { stacked: true },
+      y: { stacked: true, beginAtZero: true, ticks: { callback: (v: number) => this.formatCroresShort(v) } },
+    },
     maintainAspectRatio: false,
   };
 
@@ -180,6 +233,11 @@ export class PipelineDashboardComponent implements OnInit {
     this.http.get<{ data: PipelineData }>(`${environment.apiBaseUrl}/opportunities/pipeline${qs}`).subscribe({
       next: (r) => { this.pipeline.set(r.data); this.loading.set(false); },
       error: () => { this.loading.set(false); },
+    });
+
+    // Load orders booked (same filters)
+    this.http.get<{ data: OrdersData }>(`${environment.apiBaseUrl}/opportunities/orders-booked${qs}`).subscribe({
+      next: (r) => this.orders.set(r.data),
     });
   }
 
@@ -240,6 +298,46 @@ export class PipelineDashboardComponent implements OnInit {
     if (rupees >= 10000000) return '₹' + (rupees / 10000000).toFixed(2) + ' Cr';
     if (rupees >= 100000) return '₹' + (rupees / 100000).toFixed(2) + ' L';
     return '₹' + rupees.toLocaleString('en-IN');
+  }
+
+  weightedBuChartData() {
+    const p = this.pipeline();
+    if (!p) return {};
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
+    return {
+      labels: p.byBu.map((b) => b.buName),
+      datasets: [{
+        data: p.byBu.map((b) => b.weightedValuePaise / 100),
+        backgroundColor: p.byBu.map((_, i) => colors[i % colors.length]),
+      }],
+    };
+  }
+
+  ordersStackedChartData() {
+    const o = this.orders();
+    if (!o || o.byMonthBu.length === 0) return {};
+
+    // Get unique months and BUs
+    const months = [...new Set(o.byMonthBu.map((r) => r.month))].sort();
+    const bus = [...new Set(o.byMonthBu.map((r) => r.buName))];
+    const colors = ['#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
+
+    const monthLabels = months.map((m) => {
+      const [y, mon] = m.split('-');
+      return new Date(Number(y), Number(mon) - 1).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+    });
+
+    // Build one dataset per BU
+    const datasets = bus.map((buName, i) => ({
+      label: buName,
+      data: months.map((month) => {
+        const row = o.byMonthBu.find((r) => r.month === month && r.buName === buName);
+        return row ? row.totalValuePaise / 100 : 0;
+      }),
+      backgroundColor: colors[i % colors.length],
+    }));
+
+    return { labels: monthLabels, datasets };
   }
 
   goToOpp(id: string): void { this.router.navigate(['/sales/opportunities', id]); }

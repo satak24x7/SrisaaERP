@@ -1,7 +1,8 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
+import { Subscription } from 'rxjs';
 import {
   IonHeader,
   IonToolbar,
@@ -15,13 +16,18 @@ import {
   IonSelectOption,
   IonButton,
   IonButtons,
-  IonBackButton,
+  IonIcon,
   IonSpinner,
   IonDatetime,
   IonDatetimeButton,
   IonModal,
+  Platform,
   ToastController,
 } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { arrowBackOutline } from 'ionicons/icons';
+
+addIcons({ arrowBackOutline });
 import { TravelPlanService } from '../../core/services/travel-plan.service';
 import { LookupService } from '../../core/services/lookup.service';
 
@@ -43,7 +49,7 @@ import { LookupService } from '../../core/services/lookup.service';
     IonSelectOption,
     IonButton,
     IonButtons,
-    IonBackButton,
+    IonIcon,
     IonSpinner,
     IonDatetime,
     IonDatetimeButton,
@@ -53,7 +59,9 @@ import { LookupService } from '../../core/services/lookup.service';
     <ion-header>
       <ion-toolbar>
         <ion-buttons slot="start">
-          <ion-back-button defaultHref="/tabs/travels"></ion-back-button>
+          <ion-button (click)="goBack()">
+            <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
+          </ion-button>
         </ion-buttons>
         <ion-title>{{ editId ? 'Edit' : 'New' }} Travel Plan</ion-title>
       </ion-toolbar>
@@ -165,14 +173,17 @@ import { LookupService } from '../../core/services/lookup.service';
     </ion-content>
   `,
 })
-export class TravelFormPage implements OnInit {
+export class TravelFormPage implements OnInit, OnDestroy {
   private readonly fb = inject(FormBuilder);
   private readonly travelService = inject(TravelPlanService);
   private readonly lookupService = inject(LookupService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly platform = inject(Platform);
   private readonly toastCtrl = inject(ToastController);
 
+  private returnUrl = '/tabs/travels';
+  private backButtonSub?: Subscription;
   editId: string | null = null;
   readonly loadingData = signal(false);
   readonly saving = signal(false);
@@ -189,6 +200,10 @@ export class TravelFormPage implements OnInit {
   });
 
   ngOnInit(): void {
+    this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl') || '/tabs/travels';
+    this.backButtonSub = this.platform.backButton.subscribeWithPriority(10, () => {
+      this.goBack();
+    });
     this.editId = this.route.snapshot.paramMap.get('id');
 
     // Load BU options
@@ -224,6 +239,20 @@ export class TravelFormPage implements OnInit {
     }
   }
 
+  ngOnDestroy(): void {
+    this.backButtonSub?.unsubscribe();
+  }
+
+  goBack(): void {
+    if (this.editId) {
+      this.router.navigate(['/tabs/travels', this.editId], {
+        queryParams: { returnUrl: this.returnUrl },
+      });
+    } else {
+      this.router.navigate([this.returnUrl]);
+    }
+  }
+
   async save(): Promise<void> {
     if (this.form.invalid) return;
     this.saving.set(true);
@@ -254,13 +283,17 @@ export class TravelFormPage implements OnInit {
         await toast.present();
 
         if (this.editId) {
-          this.router.navigate(['/tabs/travels', this.editId]);
+          this.router.navigate(['/tabs/travels', this.editId], {
+            queryParams: { returnUrl: this.returnUrl },
+          });
         } else {
           const created = (res as { data?: { id?: string } }).data;
           if (created?.id) {
-            this.router.navigate(['/tabs/travels', created.id]);
+            this.router.navigate(['/tabs/travels', created.id], {
+              queryParams: { returnUrl: this.returnUrl },
+            });
           } else {
-            this.router.navigate(['/tabs/travels']);
+            this.router.navigate([this.returnUrl]);
           }
         }
       },

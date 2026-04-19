@@ -41,6 +41,11 @@ export const routes: Routes = [
           import('./features/projects/projects.routes').then((m) => m.PROJECTS_ROUTES),
       },
       {
+        path: 'bid-management',
+        loadChildren: () =>
+          import('./features/bid-management/bid-management.routes').then((m) => m.BID_MANAGEMENT_ROUTES),
+      },
+      {
         path: 'expenses',
         component: PlaceholderComponent,
         data: { title: 'Expenses', icon: 'pi pi-wallet' },

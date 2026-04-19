@@ -1,5 +1,7 @@
-import { Component } from '@angular/core';
+import { Component, inject, effect } from '@angular/core';
 import { IonApp, IonRouterOutlet } from '@ionic/angular/standalone';
+import { AuthService } from './core/services/auth.service';
+import { UsageTrackerService } from './core/services/usage-tracker.service';
 
 @Component({
   selector: 'app-root',
@@ -7,4 +9,15 @@ import { IonApp, IonRouterOutlet } from '@ionic/angular/standalone';
   imports: [IonApp, IonRouterOutlet],
   template: `<ion-app><ion-router-outlet /></ion-app>`,
 })
-export class AppComponent {}
+export class AppComponent {
+  private readonly auth = inject(AuthService);
+  private readonly usageTracker = inject(UsageTrackerService);
+
+  constructor() {
+    effect(() => {
+      if (this.auth.isAuthenticated()) {
+        this.usageTracker.init();
+      }
+    });
+  }
+}

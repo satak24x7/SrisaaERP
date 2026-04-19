@@ -4,6 +4,23 @@ All notable changes to the GovProjects Platform. Based on [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added (2026-04-20 — R4.5 Bid Management + Platform Features)
+- **Tender object** — Indian government tender standards: 35+ fields covering identity (NIT/RFP number, authority, department), classification (Open/Limited/EOI/Single Source, Works/Goods/Services/Consultancy, ICB/NCB), portal (GeM/CPPP/State), financial (estimated value, EMD + mode, tender fee, document cost), key dates (publish, pre-bid, submission online/physical, tech/fin opening), terms (bid validity, completion period), eligibility (turnover, experience, similar work, certifications). Status workflow: PUBLISHED → CORRIGENDUM → PREBID_DONE → SUBMISSION_CLOSED → TECH_OPENED → FIN_OPENED → AWARDED/CANCELLED.
+- **Tender list page** — `Bid Management → Tenders` in sidebar. Filters: search, status, type, BU. Summary cards (total, open, closed, estimated value). Sortable table with deadline highlighting (red overdue, amber upcoming with days-left). Click navigates to tender detail.
+- **Tender detail page** — 3-column layout (Identity/Portal, Financial/Eligibility, Dates/Terms). Linked Opportunity card. Notes & corrigendum sections.
+- **Tender documents** — Upload/download/delete with document types: RFP, Corrigendum, Addendum, BOQ, Drawing, Pre-Bid Minutes, Clarification, Other. Documents grouped by type with file-type icons. 25MB limit.
+- **AI RFP Analysis** — Gemini AI integration. Upload RFP document → click "Analyze RFP" → extracts: executive summary, GO/NO-GO recommendation, scope, deliverables, evaluation method/criteria, eligibility requirements, key personnel, risks/red flags, special conditions. Results persisted in `ai_analysis` JSON field. Collapsible UI (collapsed shows recommendation badge only). Smart re-analyze: button disabled when analysis is up-to-date, re-enables when documents change.
+- **Gemini configuration** — API key and model name stored in `app_config` table, editable via System → Configuration → AI Integration section. No server restart needed.
+- **Opportunity closedStatus** — New field: WON/LOST/CANCELLED/ON_HOLD. Pipeline dashboard filters to show only open opportunities.
+- **Orders Booked chart** — Stacked bar chart on Pipeline page: won orders by BU over last 12 months. Orders Won summary cards.
+- **Weighted Pipeline by BU** — New pie chart on Pipeline page.
+- **Pipeline stage ordering** — Bar chart now sorts stages by lookup list `sort_order` instead of count.
+- **In-app notifications** — `notification` table + API (list, unread count, mark read, mark all read). Bell icon in web app header with unread badge + dropdown panel. Mobile: 4th tab "Alerts" with notification list, pull-to-refresh, swipe-to-read. Auto-polls every 30 seconds.
+- **Notification triggers** — Travel plan approved/rejected → notify lead traveller. Activity assigned → notify assignee. Event/task reminder 1 hour before start/due time (cron worker, 5-min interval).
+- **Mobile app usage tracking** — `app_device` + `app_usage_daily` tables. Device registration on first launch. Session tracking with 2-minute heartbeat sync. Usage persisted in localStorage for crash resilience. Admin page: System → Mobile Usage with summary cards (installed, active now, active today, avg usage), sortable user table, detail dialog with daily usage history.
+- **Keycloak user auto-sync** — Creating a user in the app auto-creates a Keycloak account (email as username, default password `Test@1234`). Updating name/email syncs to Keycloak. Changing roles syncs realm roles. Deleting a user disables the Keycloak account. `keycloak-admin.ts` helper library.
+- **Mobile app improvements** — Direct login (username/password, no OIDC redirect). Fixed back navigation (returnUrl query param, hardware back button). Date pickers changed from modal to popover (no nav stack pollution). All list defaults to "All" instead of "My Items".
+
 ### Added (2026-04-19 — Mobile App: Ionic + Capacitor)
 - **Mobile app scaffold** — `apps/mobile/` with Angular 19 + Ionic 8 + Capacitor 6. Tab-based navigation (Activities, Calendar, Travel Plans). Keycloak OIDC authentication via `angular-auth-oidc-client`.
 - **Activities tab** — list view with Open/Upcoming/Completed segment tabs, My Items toggle, create/edit/detail pages with form validation, swipe actions (complete task, edit), floating action button for new activity.

@@ -123,9 +123,32 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 | Stock ledger | 🔲 | FR-5.13 |
 | Vendor Scorecard | 🔲 | FR-5.16 |
 
+## R4.5 — Bid Management (new)
+
+| Component | Status | Notes |
+|---|---|---|
+| Tender object (Indian standards) | 🟢 | 35+ fields: identity, classification, portal, financial, dates, terms, eligibility. Linked 1:1 to Opportunity via `tenderReleased` toggle. |
+| Tender list page | 🟢 | `/bid-management/tenders` — filters (status, type, BU, search), summary cards, sortable table with deadline highlighting |
+| Tender detail page | 🟢 | 3-column layout (identity, financial, dates), linked opportunity card, notes/corrigendum |
+| Tender documents | 🟢 | Upload/download/delete. Types: RFP, Corrigendum, Addendum, BOQ, Drawing, Pre-Bid Minutes, Clarification, Other. Grouped by type. |
+| AI RFP Analysis (Gemini) | 🟢 | Upload RFP → "Analyze RFP" → Gemini extracts: summary, GO/NO-GO, scope, evaluation, eligibility, risks, special conditions. Persisted in DB. Collapsible UI. Re-analyze only when docs change. |
+| Opportunity closedStatus | 🟢 | WON/LOST/CANCELLED/ON_HOLD. Pipeline filters to open only. |
+| Orders Booked chart | 🟢 | Stacked bar (by BU, last 12 months) + Weighted Pipeline pie on Sales Pipeline page |
+
 ## R8 — Intelligence & Dashboards
 
 ## R9 — Integrations
+
+## Platform Features (cross-cutting, shipped 2026-04-19/20)
+
+| Component | Status | Notes |
+|---|---|---|
+| In-app notifications | 🟢 | Bell icon (web header + mobile 4th tab), unread badge, mark read. Notification model + API. |
+| Notification triggers | 🟢 | Travel approve/reject, activity assignment, event/task 1hr reminder (cron worker). |
+| Mobile app usage tracking | 🟢 | Device registration, session tracking (2-min heartbeat), daily usage. Admin page under System. |
+| Keycloak user auto-sync | 🟢 | User create/update/delete → auto-sync to Keycloak (account, name, email, roles). Email as username. |
+| Gemini AI config | 🟢 | API key + model configurable via System → Configuration (app_config table). |
+| Mobile auth (direct login) | 🟢 | Username/password login (no OIDC redirect). Token refresh. |
 
 ## R10 — Remaining Organization Masters & Platform Hardening
 

@@ -15,6 +15,7 @@ const envSchema = z.object({
   REDIS_URL: z.string().url(),
 
   JWT_ISSUER: z.string().url(),
+  JWT_ISSUER_ALIASES: z.string().optional(), // comma-separated alternate issuer URLs (e.g. LAN IP)
   JWT_AUDIENCE: z.string(),
 
   DEFAULT_CURRENCY: z.string().default('INR'),

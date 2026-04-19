@@ -1,17 +1,16 @@
 import { inject } from '@angular/core';
-import { type CanActivateFn } from '@angular/router';
-import { OidcSecurityService } from 'angular-auth-oidc-client';
-import { map, take } from 'rxjs';
+import { type CanActivateFn, Router } from '@angular/router';
+import { AuthService } from '../services/auth.service';
 
-export const authGuard: CanActivateFn = () => {
-  const oidc = inject(OidcSecurityService);
+export const authGuard: CanActivateFn = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
 
-  return oidc.checkAuth().pipe(
-    take(1),
-    map(({ isAuthenticated }) => {
-      if (isAuthenticated) return true;
-      oidc.authorize();
-      return false;
-    })
-  );
+  if (auth.isAuthenticated()) return true;
+
+  // Try token refresh before redirecting to login
+  const refreshed = await auth.refreshAccessToken();
+  if (refreshed) return true;
+
+  return router.createUrlTree(['/login']);
 };

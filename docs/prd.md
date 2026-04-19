@@ -71,8 +71,10 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 | R8 Intelligence | BU portfolio, procurement, cash-flow dashboards | |
 | R9 Integrations | Accounting, banking, HRMS, SSO | |
 | R10 Org Masters & Hardening | Certifications, DSCs, Empanelments, Turnover, Past Projects, Employees, Expiry Dashboard, RBAC enforcement, Infra bootstrap, Dashboard page | |
+| R4.5 Bid Management | Tender object (Indian standards, 35+ fields), Tender list + detail pages under Bid Management menu, tender documents (RFP/Corrigendum/BOQ/etc.), AI-powered RFP analysis via Gemini (GO/NO-GO recommendation), Opportunity closedStatus (WON/LOST/CANCELLED/ON_HOLD), Orders Booked charts on Pipeline, Weighted Pipeline by BU pie chart | **Shipped** |
 | R11 Tender Workflows | Managed Tenders (M1-M7), Go/No-Go Workflow, Bid Submission, DPR repository, Consortium tracker, Active Tender import | |
-| Mobile App | Ionic 7 + Capacitor. 3 tabs: Activities (list + create/edit), Calendar (month grid + day events), Travel Plans (list + detail + workflow). Keycloak OIDC auth. Android platform. Online only. | **Shipped** |
+| Mobile App | Ionic 8 + Capacitor 6. 4 tabs: Activities, Calendar, Travel Plans, Notifications. Direct login (email/password). Usage tracking with 2-min heartbeat. Android APK. | **Shipped** |
+| Platform | In-app notifications (web bell + mobile tab), reminder worker (1hr before events), mobile usage tracking (admin page), Keycloak auto-sync (users + roles from app), Gemini AI config in System → Configuration | **Shipped** |
 
 MVP = R1 + R2 + R3 (Execution Core) + R4 (Evaluation & Award). Expense and Procurement are **fast-follows**, not optional. R10 items can be pulled into any release as needed.
 

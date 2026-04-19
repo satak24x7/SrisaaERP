@@ -1,13 +1,14 @@
-import { Component, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
+import { Subscription } from 'rxjs';
 import {
   IonHeader,
   IonToolbar,
   IonTitle,
   IonContent,
   IonButtons,
-  IonBackButton,
+  Platform,
   IonBadge,
   IonSegment,
   IonSegmentButton,
@@ -33,13 +34,14 @@ import {
   createOutline,
   addCircleOutline,
   trashOutline,
+  arrowBackOutline,
 } from 'ionicons/icons';
 import { TravelPlanService } from '../../core/services/travel-plan.service';
 import { TicketModalComponent, TicketData } from './ticket-modal.component';
 import { HotelModalComponent, HotelData } from './hotel-modal.component';
 import { ExpenseModalComponent, ExpenseData } from './expense-modal.component';
 
-addIcons({ createOutline, addCircleOutline, trashOutline });
+addIcons({ createOutline, addCircleOutline, trashOutline, arrowBackOutline });
 
 interface TravelPlan {
   id: string;
@@ -85,7 +87,6 @@ interface TravelPlan {
     IonTitle,
     IonContent,
     IonButtons,
-    IonBackButton,
     IonBadge,
     IonSegment,
     IonSegmentButton,
@@ -153,7 +154,9 @@ interface TravelPlan {
     <ion-header>
       <ion-toolbar>
         <ion-buttons slot="start">
-          <ion-back-button defaultHref="/tabs/travels"></ion-back-button>
+          <ion-button (click)="goBack()">
+            <ion-icon slot="icon-only" name="arrow-back-outline"></ion-icon>
+          </ion-button>
         </ion-buttons>
         <ion-title>Travel Plan</ion-title>
         @if (plan()) {
@@ -425,10 +428,11 @@ interface TravelPlan {
     }
   `,
 })
-export class TravelDetailPage implements OnInit {
+export class TravelDetailPage implements OnInit, OnDestroy {
   private readonly travelService = inject(TravelPlanService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly platform = inject(Platform);
   private readonly modalCtrl = inject(ModalController);
   private readonly alertCtrl = inject(AlertController);
   private readonly toastCtrl = inject(ToastController);
@@ -471,10 +475,26 @@ export class TravelDetailPage implements OnInit {
   });
 
   private planId = '';
+  private returnUrl = '/tabs/travels';
+  private backButtonSub?: Subscription;
 
   ngOnInit(): void {
     this.planId = this.route.snapshot.paramMap.get('id') ?? '';
+    this.returnUrl = this.route.snapshot.queryParamMap.get('returnUrl') || '/tabs/travels';
+
+    this.backButtonSub = this.platform.backButton.subscribeWithPriority(10, () => {
+      this.goBack();
+    });
+
     this.loadPlan();
+  }
+
+  ngOnDestroy(): void {
+    this.backButtonSub?.unsubscribe();
+  }
+
+  goBack(): void {
+    this.router.navigate([this.returnUrl]);
   }
 
   onTabChange(event: CustomEvent): void {
@@ -482,7 +502,9 @@ export class TravelDetailPage implements OnInit {
   }
 
   goEdit(): void {
-    this.router.navigate(['/tabs/travels', this.planId, 'edit']);
+    this.router.navigate(['/tabs/travels', this.planId, 'edit'], {
+      queryParams: { returnUrl: this.returnUrl },
+    });
   }
 
   /* ── Workflow transitions ── */

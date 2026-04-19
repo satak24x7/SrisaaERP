@@ -187,7 +187,7 @@ export class TravelListPage implements OnInit {
   private readonly router = inject(Router);
 
   readonly statuses = STATUS_LIST;
-  readonly viewMode = signal<'my' | 'all'>('my');
+  readonly viewMode = signal<'my' | 'all'>('all');
   readonly activeStatus = signal<string | null>(null);
   readonly loading = signal(false);
   readonly plans = signal<TravelPlanSummary[]>([]);

@@ -1,10 +1,10 @@
 import { Routes } from '@angular/router';
 import { authGuard } from './core/auth/auth.guard';
-import { CallbackComponent } from './core/auth/callback.component';
+import { LoginPage } from './core/auth/login.page';
 
 export const routes: Routes = [
   { path: '', redirectTo: 'tabs', pathMatch: 'full' },
-  { path: 'callback', component: CallbackComponent },
+  { path: 'login', component: LoginPage },
   {
     path: 'tabs',
     canActivate: [authGuard],
@@ -31,6 +31,13 @@ export const routes: Routes = [
         loadChildren: () =>
           import('./features/travels/travels.routes').then(
             (m) => m.travelsRoutes
+          ),
+      },
+      {
+        path: 'notifications',
+        loadComponent: () =>
+          import('./features/notifications/notifications.page').then(
+            (m) => m.NotificationsPage
           ),
       },
     ],

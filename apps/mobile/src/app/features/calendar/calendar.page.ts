@@ -220,7 +220,7 @@ export class CalendarPage implements OnInit {
   readonly currentMonth = signal<Date>(new Date());
   readonly selectedDate = signal<string>(this.toDateStr(new Date()));
   readonly monthEvents = signal<CalendarEvent[]>([]);
-  readonly myItems = signal<boolean>(true);
+  readonly myItems = signal<boolean>(false);
   readonly loading = signal<boolean>(false);
 
   readonly monthLabel = computed(() => {

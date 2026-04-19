@@ -6,6 +6,7 @@ import { recordAudit } from '../../../middleware/audit.js';
 import { prisma, newId } from '../../../lib/prisma.js';
 import { errors } from '../../../middleware/error-handler.js';
 import { costOfSaleRouter } from './cost-of-sale.routes.js';
+import { tenderRouter } from './tender.routes.js';
 import { Prisma } from '@prisma/client';
 
 const IdParams = z.object({ id: z.string().min(1).max(26) });
@@ -21,6 +22,7 @@ const CreateInput = z.object({
   probabilityPct: z.coerce.number().int().min(0).max(100).optional(),
   submissionDue: z.string().optional(),
   ownerUserId: z.string().max(26).optional(),
+  closedStatus: z.string().max(64).nullable().optional(),
   contactIds: z.array(z.string().min(1).max(26)).optional(),
 });
 
@@ -35,6 +37,8 @@ const UpdateInput = z.object({
   probabilityPct: z.coerce.number().int().min(0).max(100).nullable().optional(),
   submissionDue: z.string().nullable().optional(),
   ownerUserId: z.string().max(26).nullable().optional(),
+  closedStatus: z.string().max(64).nullable().optional(),
+  tenderReleased: z.boolean().optional(),
   contactIds: z.array(z.string().min(1).max(26)).optional(),
 });
 
@@ -71,6 +75,8 @@ function toDto(r: Record<string, unknown>) {
   };
   return {
     id: row.id, title: row.title, stage: row.stage, entryPath: row.entryPath,
+    closedStatus: row.closedStatus ?? null,
+    tenderReleased: row.tenderReleased ?? false,
     contractValuePaise: row.contractValuePaise != null ? Number(row.contractValuePaise) : null,
     probabilityPct: row.probabilityPct, submissionDue: row.submissionDue,
     businessUnitId: row.businessUnitId, businessUnitName: row.businessUnit?.name ?? null,
@@ -137,8 +143,8 @@ opportunityRouter.get(
   asyncHandler(async (req, res) => {
     const q = req.query as unknown as z.infer<typeof PipelineQuery>;
 
-    // Build WHERE clause for raw queries
-    const conditions: string[] = ['o.deleted_at IS NULL'];
+    // Build WHERE clause for raw queries — pipeline only shows open opportunities
+    const conditions: string[] = ['o.deleted_at IS NULL', 'o.closed_status IS NULL'];
     const params: unknown[] = [];
     if (q.buId) { conditions.push('o.business_unit_id = ?'); params.push(q.buId); }
     if (q.stage) { conditions.push('o.stage = ?'); params.push(q.stage); }
@@ -157,7 +163,7 @@ opportunityRouter.get(
     );
     const s = summaryRows[0]!;
 
-    // By stage
+    // By stage — ordered by lookup list sort_order
     const byStage = await prisma.$queryRawUnsafe<Array<{
       stage: string; count: bigint; total_value_paise: bigint | null; weighted_value_paise: bigint | null;
     }>>(
@@ -165,26 +171,30 @@ opportunityRouter.get(
               COUNT(*) AS count,
               COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise,
               COALESCE(SUM(o.contract_value_paise * COALESCE(o.probability_pct, 0) / 100), 0) AS weighted_value_paise
-       FROM opportunity o WHERE ${whereClause}
-       GROUP BY o.stage ORDER BY count DESC`,
+       FROM opportunity o
+       LEFT JOIN lookup_item li ON li.value = o.stage
+         AND li.list_id = (SELECT id FROM lookup_list WHERE code = 'opportunity_stage' LIMIT 1)
+       WHERE ${whereClause}
+       GROUP BY o.stage, li.sort_order ORDER BY COALESCE(li.sort_order, 9999) ASC`,
       ...params,
     );
 
     // By BU
     const byBu = await prisma.$queryRawUnsafe<Array<{
-      business_unit_id: string; bu_name: string; count: bigint; total_value_paise: bigint | null;
+      business_unit_id: string; bu_name: string; count: bigint; total_value_paise: bigint | null; weighted_value_paise: bigint | null;
     }>>(
       `SELECT o.business_unit_id, bu.name AS bu_name,
               COUNT(*) AS count,
-              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise
+              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise,
+              COALESCE(SUM(o.contract_value_paise * COALESCE(o.probability_pct, 0) / 100), 0) AS weighted_value_paise
        FROM opportunity o JOIN business_unit bu ON bu.id = o.business_unit_id
        WHERE ${whereClause}
        GROUP BY o.business_unit_id, bu.name ORDER BY count DESC`,
       ...params,
     );
 
-    // Opportunity list (with includes for the table)
-    const oppWhere: Record<string, unknown> = { deletedAt: null };
+    // Opportunity list (with includes for the table) — only open opportunities
+    const oppWhere: Record<string, unknown> = { deletedAt: null, closedStatus: null };
     if (q.buId) oppWhere.businessUnitId = q.buId;
     if (q.stage) oppWhere.stage = q.stage;
     if (q.ownerUserId) oppWhere.ownerUserId = q.ownerUserId;
@@ -212,6 +222,110 @@ opportunityRouter.get(
         byBu: byBu.map((r) => ({
           buId: r.business_unit_id,
           buName: r.bu_name,
+          count: Number(r.count),
+          totalValuePaise: Number(r.total_value_paise ?? 0),
+          weightedValuePaise: Number(r.weighted_value_paise ?? 0),
+        })),
+        opportunities: opportunities.map((r) => toDto(r as unknown as Record<string, unknown>)),
+      },
+    });
+  }),
+);
+
+/* GET /orders-booked — won opportunities summary */
+opportunityRouter.get(
+  '/orders-booked',
+  validate({ query: PipelineQuery }),
+  asyncHandler(async (req, res) => {
+    const q = req.query as unknown as z.infer<typeof PipelineQuery>;
+
+    const conditions: string[] = ["o.deleted_at IS NULL", "o.closed_status = 'WON'"];
+    const params: unknown[] = [];
+    if (q.buId) { conditions.push('o.business_unit_id = ?'); params.push(q.buId); }
+    if (q.stage) { conditions.push('o.stage = ?'); params.push(q.stage); }
+    if (q.ownerUserId) { conditions.push('o.owner_user_id = ?'); params.push(q.ownerUserId); }
+    const whereClause = conditions.join(' AND ');
+
+    // Summary
+    const summaryRows = await prisma.$queryRawUnsafe<Array<{
+      total_orders: bigint; total_value_paise: bigint | null;
+    }>>(
+      `SELECT COUNT(*) AS total_orders,
+              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise
+       FROM opportunity o WHERE ${whereClause}`,
+      ...params,
+    );
+    const s = summaryRows[0]!;
+
+    // By BU
+    const byBu = await prisma.$queryRawUnsafe<Array<{
+      bu_name: string; count: bigint; total_value_paise: bigint | null;
+    }>>(
+      `SELECT bu.name AS bu_name, COUNT(*) AS count,
+              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise
+       FROM opportunity o JOIN business_unit bu ON bu.id = o.business_unit_id
+       WHERE ${whereClause}
+       GROUP BY bu.name ORDER BY total_value_paise DESC`,
+      ...params,
+    );
+
+    // By month (last 12 months)
+    const byMonth = await prisma.$queryRawUnsafe<Array<{
+      month_label: string; count: bigint; total_value_paise: bigint | null;
+    }>>(
+      `SELECT DATE_FORMAT(o.updated_at, '%Y-%m') AS month_label,
+              COUNT(*) AS count,
+              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise
+       FROM opportunity o WHERE ${whereClause}
+         AND o.updated_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+       GROUP BY month_label ORDER BY month_label ASC`,
+      ...params,
+    );
+
+    // By month + BU (for stacked bar chart)
+    const byMonthBu = await prisma.$queryRawUnsafe<Array<{
+      month_label: string; bu_name: string; total_value_paise: bigint | null;
+    }>>(
+      `SELECT DATE_FORMAT(o.updated_at, '%Y-%m') AS month_label,
+              bu.name AS bu_name,
+              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise
+       FROM opportunity o JOIN business_unit bu ON bu.id = o.business_unit_id
+       WHERE ${whereClause}
+         AND o.updated_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+       GROUP BY month_label, bu.name ORDER BY month_label ASC`,
+      ...params,
+    );
+
+    // Won opportunity list
+    const oppWhere: Record<string, unknown> = { deletedAt: null, closedStatus: 'WON' };
+    if (q.buId) oppWhere.businessUnitId = q.buId;
+    if (q.ownerUserId) oppWhere.ownerUserId = q.ownerUserId;
+
+    const opportunities = await prisma.opportunity.findMany({
+      where: oppWhere,
+      include: OPP_INCLUDE,
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+
+    res.json({
+      data: {
+        summary: {
+          totalOrders: Number(s.total_orders),
+          totalValuePaise: Number(s.total_value_paise ?? 0),
+        },
+        byBu: byBu.map((r) => ({
+          buName: r.bu_name,
+          count: Number(r.count),
+          totalValuePaise: Number(r.total_value_paise ?? 0),
+        })),
+        byMonthBu: byMonthBu.map((r) => ({
+          month: r.month_label,
+          buName: r.bu_name,
+          totalValuePaise: Number(r.total_value_paise ?? 0),
+        })),
+        byMonth: byMonth.map((r) => ({
+          month: r.month_label,
           count: Number(r.count),
           totalValuePaise: Number(r.total_value_paise ?? 0),
         })),
@@ -259,6 +373,7 @@ opportunityRouter.post(
         probabilityPct: body.probabilityPct ?? null,
         submissionDue: body.submissionDue ? new Date(body.submissionDue) : null,
         ownerUserId: body.ownerUserId ?? null,
+        closedStatus: body.closedStatus ?? null,
         createdBy: actor, updatedBy: actor,
       },
     });
@@ -348,3 +463,4 @@ opportunityRouter.delete(
 
 /* Mount nested sub-routers */
 opportunityRouter.use('/:id/cost-of-sale', costOfSaleRouter);
+opportunityRouter.use('/:id/tender', tenderRouter);

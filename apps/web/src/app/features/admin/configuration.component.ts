@@ -44,6 +44,25 @@ import { environment } from '../../../environments/environment';
               <small class="text-gray-500">Users must enter this password to view login/password/mobile/email in Statutory Registrations</small>
             </div>
           </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+          <h3 class="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
+            <i class="pi pi-sparkles text-purple-600"></i>
+            AI Integration
+          </h3>
+          <div class="flex flex-col gap-5">
+            <div class="flex flex-col gap-1">
+              <label class="text-sm font-medium text-gray-700">Gemini API Key</label>
+              <input pInputText formControlName="geminiApiKey" type="password" placeholder="Enter Google Gemini API key" class="w-full" />
+              <small class="text-gray-500">Used for AI-powered RFP analysis in Bid Management → Tenders. Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" class="text-blue-600 hover:underline">Google AI Studio</a></small>
+            </div>
+            <div class="flex flex-col gap-1">
+              <label class="text-sm font-medium text-gray-700">Gemini Model</label>
+              <input pInputText formControlName="geminiModel" placeholder="gemini-2.0-flash" class="w-full" />
+              <small class="text-gray-500">Default: gemini-2.0-flash. Alternatives: gemini-2.0-flash-lite, gemini-2.5-flash-preview-05-20</small>
+            </div>
+          </div>
           @if (serverError) {
             <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{{ serverError }}</div>
           }
@@ -68,6 +87,8 @@ export class ConfigurationComponent implements OnInit {
   form = this.fb.group({
     buHeadRoleName: [''],
     statutoryRevealPassword: [''],
+    geminiApiKey: [''],
+    geminiModel: [''],
   });
 
   ngOnInit(): void {
@@ -76,6 +97,8 @@ export class ConfigurationComponent implements OnInit {
         this.form.patchValue({
           buHeadRoleName: r.data['buHeadRoleName'] ?? '',
           statutoryRevealPassword: r.data['statutoryRevealPassword'] ?? '',
+          geminiApiKey: r.data['gemini_api_key'] ?? '',
+          geminiModel: r.data['gemini_model'] ?? '',
         });
         this.form.markAsPristine();
         this.loading.set(false);
@@ -90,6 +113,8 @@ export class ConfigurationComponent implements OnInit {
     const items = [
       { key: 'buHeadRoleName', value: v.buHeadRoleName ?? '' },
       { key: 'statutoryRevealPassword', value: v.statutoryRevealPassword ?? '' },
+      { key: 'gemini_api_key', value: v.geminiApiKey ?? '' },
+      { key: 'gemini_model', value: v.geminiModel ?? '' },
     ];
 
     this.http.put(`${environment.apiBaseUrl}/config`, { items }).subscribe({

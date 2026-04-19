@@ -35,10 +35,22 @@ export class CallbackComponent implements OnInit {
   private readonly router = inject(Router);
 
   ngOnInit(): void {
-    this.oidc.checkAuth().subscribe(({ isAuthenticated }) => {
-      if (isAuthenticated) {
-        this.router.navigate(['/tabs']);
-      }
+    this.oidc.checkAuth().subscribe({
+      next: ({ isAuthenticated }) => {
+        if (isAuthenticated) {
+          this.router.navigate(['/tabs']);
+        } else {
+          this.router.navigate(['/login'], {
+            queryParams: { error: 'Authentication failed — not authenticated after callback' },
+          });
+        }
+      },
+      error: (err) => {
+        console.error('[callback] checkAuth error:', err);
+        this.router.navigate(['/login'], {
+          queryParams: { error: String(err?.message || err) },
+        });
+      },
     });
   }
 }

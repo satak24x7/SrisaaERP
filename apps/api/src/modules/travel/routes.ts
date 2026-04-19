@@ -5,6 +5,7 @@ import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
+import { notify } from '../notification/service.js';
 
 // --- Zod schemas ---
 
@@ -451,6 +452,41 @@ travelRouter.post('/:id/:action', validate({ params: TransitionParams, body: Tra
 
   await prisma.travelPlan.update({ where: { id: plan.id }, data });
   await recordAudit(req, { action: 'UPDATE', resourceType: 'travel_plan', resourceId: plan.id, after: { status: transition.to } });
+
+  // --- Send notifications ---
+  const actorName = req.user?.fullName ?? 'Someone';
+  const planTitle = plan.title;
+  const ownerId = plan.leadTravellerId;
+
+  if (actionName === 'submit' && ownerId) {
+    // TODO: Notify the approver (for now, notify BU head or admin). Skip for MVP.
+  }
+  if (actionName === 'approve' && ownerId) {
+    await notify({
+      userId: ownerId,
+      title: 'Travel plan approved',
+      body: `"${planTitle}" has been approved by ${actorName}`,
+      type: 'SUCCESS',
+      category: 'TRAVEL',
+      entityType: 'TRAVEL_PLAN',
+      entityId: plan.id,
+      actionUrl: `/work-area/travels/${plan.id}`,
+    });
+  }
+  if (actionName === 'reject' && ownerId) {
+    const reason = (req.body as { reason?: string } | undefined)?.reason;
+    await notify({
+      userId: ownerId,
+      title: 'Travel plan rejected',
+      body: `"${planTitle}" was rejected by ${actorName}${reason ? ': ' + reason : ''}`,
+      type: 'WARNING',
+      category: 'TRAVEL',
+      entityType: 'TRAVEL_PLAN',
+      entityId: plan.id,
+      actionUrl: `/work-area/travels/${plan.id}`,
+    });
+  }
+
   res.json({ data: { status: transition.to } });
 }));
 
