@@ -37,4 +37,14 @@ export const SALES_ROUTES: Routes = [
     loadComponent: () =>
       import('./opportunity-detail.component').then((m) => m.OpportunityDetailComponent),
   },
+  {
+    path: 'initiatives',
+    loadComponent: () =>
+      import('./initiative-list.component').then((m) => m.InitiativeListComponent),
+  },
+  {
+    path: 'initiatives/:id',
+    loadComponent: () =>
+      import('./initiative-detail.component').then((m) => m.InitiativeDetailComponent),
+  },
 ];

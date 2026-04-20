@@ -30,6 +30,7 @@ export const appConfig: ApplicationConfig = {
         responseType: 'code',
         silentRenew: true,
         useRefreshToken: true,
+        renewTimeBeforeTokenExpiresInSeconds: 120,
         autoUserInfo: true,
       },
     }),

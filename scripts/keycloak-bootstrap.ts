@@ -103,13 +103,7 @@ function log(msg: string): void {
 // ---------------------------------------------------------------------------
 
 async function createRealm(): Promise<void> {
-  const { status } = await kc('GET', `/admin/realms/${REALM}`);
-  if (status === 200) {
-    log(`Realm "${REALM}" already exists — skipping creation`);
-    return;
-  }
-
-  const { status: createStatus, data } = await kc('POST', '/admin/realms', {
+  const realmSettings = {
     realm: REALM,
     enabled: true,
     displayName: 'GovProjects Platform',
@@ -119,9 +113,27 @@ async function createRealm(): Promise<void> {
     editUsernameAllowed: false,
     sslRequired: 'none', // dev only
     accessTokenLifespan: 900, // 15 min
-    ssoSessionIdleTimeout: 1800,
+    ssoSessionIdleTimeout: 18000, // 5 hours — keeps refresh token alive during work day
     ssoSessionMaxLifespan: 36000, // 10h
-  });
+  };
+
+  const { status } = await kc('GET', `/admin/realms/${REALM}`);
+  if (status === 200) {
+    // Update existing realm with latest session settings
+    const { status: updateStatus, data: updateData } = await kc(
+      'PUT',
+      `/admin/realms/${REALM}`,
+      realmSettings,
+    );
+    if (updateStatus === 204) {
+      log(`Realm "${REALM}" already exists — updated session settings (idle=5h, max=10h)`);
+    } else {
+      throw new Error(`Failed to update realm: ${updateStatus} ${JSON.stringify(updateData)}`);
+    }
+    return;
+  }
+
+  const { status: createStatus, data } = await kc('POST', '/admin/realms', realmSettings);
 
   if (createStatus === 201) {
     log(`Realm "${REALM}" created`);
@@ -260,13 +272,21 @@ async function createRealmRoles(): Promise<void> {
 }
 
 async function createTestUser(): Promise<void> {
-  // Check if user exists
+  // Check if user exists (by username or email)
   const { status, data } = await kc(
     'GET',
     `/admin/realms/${REALM}/users?username=${TEST_USER.username}&exact=true`,
   );
   if (status === 200 && Array.isArray(data) && data.length > 0) {
     log(`User "${TEST_USER.username}" already exists — skipping`);
+    return;
+  }
+  const { status: emailStatus, data: emailData } = await kc(
+    'GET',
+    `/admin/realms/${REALM}/users?email=${TEST_USER.email}&exact=true`,
+  );
+  if (emailStatus === 200 && Array.isArray(emailData) && emailData.length > 0) {
+    log(`User with email "${TEST_USER.email}" already exists — skipping`);
     return;
   }
 

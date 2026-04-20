@@ -226,6 +226,7 @@ export class ShellComponent implements OnInit, OnDestroy {
         { label: 'Leads', icon: 'pi pi-filter', route: '/sales/leads' },
         { label: 'Influencers', icon: 'pi pi-user-plus', route: '/sales/influencers' },
         { label: 'Opportunities', icon: 'pi pi-star', route: '/sales/opportunities' },
+        { label: 'Initiatives', icon: 'pi pi-flag', route: '/sales/initiatives' },
       ],
     },
     {

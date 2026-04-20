@@ -191,6 +191,7 @@ model BusinessUnit {
 
   leads            Lead[]
   opportunities    Opportunity[]
+  initiatives      Initiative[]
   projects         Project[]
   expenseSheets    ExpenseSheet[]
   materialRequests MaterialRequest[]
@@ -258,6 +259,7 @@ model User {
   ledTravelPlans       TravelPlan[]           @relation("TravelLeader")
   travelMemberships    TravelPlanTraveller[]
   passwordEntries      PasswordEntry[]        @relation("PasswordOwner")
+  ownedInitiatives     Initiative[]           @relation("InitiativeOwner")
   ownedTasks           Task[]                 @relation("TaskOwner")
   effortLogs           TaskEffortLog[]        @relation("EffortLogger")
   ownedRisks           Risk[]                 @relation("RiskOwner")
@@ -543,6 +545,7 @@ model Account {
   childAccounts   Account[]        @relation("AccountHierarchy")
   government      Government?      @relation(fields: [governmentId], references: [id])
   accountContacts        AccountContact[]
+  initiativeAccounts     InitiativeAccount[]
   leads                  Lead[]
   opportunities          Opportunity[] @relation("OpportunityAccount")
   endClientOpportunities Opportunity[] @relation("OpportunityEndClient")
@@ -571,6 +574,7 @@ model Contact {
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
   accountContacts     AccountContact[]
+  initiativeContacts  InitiativeContact[]
   leads               Lead[]               @relation("LeadContact")
   opportunityContacts OpportunityContact[]
   activityContacts    ActivityContact[]
@@ -651,6 +655,95 @@ model OpportunityContact {
   @@map("opportunity_contact")
 }
 
+// ==========================================================================
+// Initiative — Strategic BD effort spanning multiple accounts / opportunities
+// ==========================================================================
+
+model Initiative {
+  id               String    @id @db.VarChar(26)
+  title            String    @db.VarChar(255)
+  description      String?   @db.Text
+  businessUnitId   String    @map("business_unit_id") @db.VarChar(26)
+  ownerUserId      String    @map("owner_user_id") @db.VarChar(26)
+  status           String    @default("DRAFT") @db.VarChar(32) // DRAFT, ACTIVE, ON_HOLD, COMPLETED, CANCELLED
+  targetValuePaise BigInt?   @map("target_value_paise")
+  startDate        DateTime? @map("start_date") @db.Date
+  endDate          DateTime? @map("end_date") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  businessUnit            BusinessUnit            @relation(fields: [businessUnitId], references: [id])
+  owner                   User                    @relation("InitiativeOwner", fields: [ownerUserId], references: [id])
+  initiativeAccounts      InitiativeAccount[]
+  initiativeContacts      InitiativeContact[]
+  initiativeLeads         InitiativeLead[]
+  initiativeOpportunities InitiativeOpportunity[]
+
+  @@index([businessUnitId, status, createdAt])
+  @@index([ownerUserId])
+  @@map("initiative")
+}
+
+model InitiativeAccount {
+  id           String   @id @db.VarChar(26)
+  initiativeId String   @map("initiative_id") @db.VarChar(26)
+  accountId    String   @map("account_id") @db.VarChar(26)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  initiative Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  account    Account    @relation(fields: [accountId], references: [id])
+
+  @@unique([initiativeId, accountId])
+  @@index([accountId])
+  @@map("initiative_account")
+}
+
+model InitiativeContact {
+  id           String   @id @db.VarChar(26)
+  initiativeId String   @map("initiative_id") @db.VarChar(26)
+  contactId    String   @map("contact_id") @db.VarChar(26)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  initiative Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  contact    Contact    @relation(fields: [contactId], references: [id])
+
+  @@unique([initiativeId, contactId])
+  @@index([contactId])
+  @@map("initiative_contact")
+}
+
+model InitiativeLead {
+  id           String   @id @db.VarChar(26)
+  initiativeId String   @map("initiative_id") @db.VarChar(26)
+  leadId       String   @map("lead_id") @db.VarChar(26)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  initiative Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  lead       Lead       @relation(fields: [leadId], references: [id])
+
+  @@unique([initiativeId, leadId])
+  @@index([leadId])
+  @@map("initiative_lead")
+}
+
+model InitiativeOpportunity {
+  id            String   @id @db.VarChar(26)
+  initiativeId  String   @map("initiative_id") @db.VarChar(26)
+  opportunityId String   @map("opportunity_id") @db.VarChar(26)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  initiative  Initiative  @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id])
+
+  @@unique([initiativeId, opportunityId])
+  @@index([opportunityId])
+  @@map("initiative_opportunity")
+}
+
 model Lead {
   id                    String     @id @db.VarChar(26)
   title                 String     @db.VarChar(255)
@@ -676,6 +769,7 @@ model Lead {
   contact              Contact?      @relation("LeadContact", fields: [contactId], references: [id])
   businessUnit         BusinessUnit? @relation(fields: [businessUnitId], references: [id])
   convertedOpportunity Opportunity?  @relation("ConvertedFromLead", fields: [convertedOpportunityId], references: [id])
+  initiativeLeads      InitiativeLead[]
 
   @@index([status])
   @@index([accountId])
@@ -713,10 +807,11 @@ model Opportunity {
   owner                  User?        @relation("OpportunityOwner", fields: [ownerUserId], references: [id])
   projects               Project[]
   leads                  Lead[]                  @relation("ConvertedFromLead")
-  opportunityContacts    OpportunityContact[]
-  opportunityInfluencers OpportunityInfluencer[]
-  costOfSaleEntries      CostOfSaleEntry[]
-  tender                 Tender?
+  opportunityContacts      OpportunityContact[]
+  opportunityInfluencers   OpportunityInfluencer[]
+  initiativeOpportunities  InitiativeOpportunity[]
+  costOfSaleEntries        CostOfSaleEntry[]
+  tender                   Tender?
 
   @@index([businessUnitId, stage, createdAt])
   @@index([accountId])

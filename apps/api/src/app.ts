@@ -26,6 +26,7 @@ import { contactRouter } from './modules/sales/contact/routes.js';
 import { leadRouter } from './modules/sales/lead/routes.js';
 import { influencerRouter } from './modules/sales/influencer/routes.js';
 import { opportunityRouter } from './modules/sales/opportunity/routes.js';
+import { initiativeRouter } from './modules/sales/initiative/routes.js';
 import { activityRouter } from './modules/activity/routes.js';
 import { travelRouter } from './modules/travel/routes.js';
 import { passwordRouter } from './modules/password/routes.js';
@@ -101,6 +102,7 @@ export function createApp(): Express {
   app.use('/api/v1/leads', leadRouter);
   app.use('/api/v1/influencers', influencerRouter);
   app.use('/api/v1/opportunities', opportunityRouter);
+  app.use('/api/v1/initiatives', initiativeRouter);
   app.use('/api/v1/activities', activityRouter);
   app.use('/api/v1/travel-plans', travelRouter);
   app.use('/api/v1/passwords', passwordRouter);

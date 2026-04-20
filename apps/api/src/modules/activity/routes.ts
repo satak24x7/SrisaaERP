@@ -9,7 +9,7 @@ import { notify } from '../notification/service.js';
 
 const ACTIVITY_TYPES = ['EVENT', 'TASK'] as const;
 const TASK_STATUSES = ['OPEN', 'OVERDUE', 'CLOSED'] as const;
-const ENTITY_TYPES = ['OPPORTUNITY', 'LEAD', 'ACCOUNT', 'CONTACT', 'INFLUENCER', 'PROJECT'] as const;
+const ENTITY_TYPES = ['OPPORTUNITY', 'LEAD', 'ACCOUNT', 'CONTACT', 'INFLUENCER', 'PROJECT', 'INITIATIVE'] as const;
 
 const IdParams = z.object({ id: z.string().min(1).max(26) });
 
@@ -165,6 +165,11 @@ async function resolveEntityNames(activities: Array<{ associations?: Array<{ ent
     lookups.push(prisma.project.findMany({
       where: { id: { in: [...byType['PROJECT']!] } }, select: { id: true, name: true },
     }).then((rows) => rows.forEach((r) => names.set(`PROJECT:${r.id}`, r.name))));
+  }
+  if (byType['INITIATIVE']?.size) {
+    lookups.push(prisma.initiative.findMany({
+      where: { id: { in: [...byType['INITIATIVE']!] } }, select: { id: true, title: true },
+    }).then((rows) => rows.forEach((r) => names.set(`INITIATIVE:${r.id}`, r.title))));
   }
   await Promise.all(lookups);
   return names;
