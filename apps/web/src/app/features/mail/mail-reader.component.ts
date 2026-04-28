@@ -68,7 +68,7 @@ interface MailMessage {
         <!-- Body -->
         <div class="bg-white rounded-lg shadow-sm border border-gray-200 mb-4">
           @if (message()!.bodyHtml) {
-            <iframe #bodyFrame [srcdoc]="sanitizedHtml()" sandbox="allow-same-origin"
+            <iframe #bodyFrame [srcdoc]="cachedSrcdoc" sandbox="allow-same-origin"
               class="w-full border-0 min-h-[400px]" (load)="resizeIframe()"></iframe>
           } @else {
             <pre class="p-5 text-sm text-gray-700 whitespace-pre-wrap font-sans">{{ message()!.bodyText || '(empty message)' }}</pre>
@@ -100,6 +100,7 @@ interface MailMessage {
         <div class="text-center py-16 text-gray-400">
           <i class="pi pi-envelope text-5xl mb-4"></i>
           <p>Message not found</p>
+          <p-button label="Back to Inbox" icon="pi pi-arrow-left" [outlined]="true" class="mt-4" (onClick)="goBack()" />
         </div>
       }
     </div>
@@ -116,6 +117,7 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
 
   message = signal<MailMessage | null>(null);
   loading = signal(true);
+  cachedSrcdoc = '';
   private needsResize = false;
 
   ngOnInit(): void {
@@ -128,61 +130,16 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
       return;
     }
 
-    // First ensure the message is cached by fetching the list page containing this uid
-    // Then find the DB id and fetch the full body
-    this.http.get<{ data: Array<{ uid: number }> }>(
-      `${environment.apiBaseUrl}/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&page=1&limit=100`,
-    ).subscribe({
-      next: () => {
-        // Now find the cached message by account+folder+uid via a DB query
-        // The messages endpoint already cached it. Let's search in DB via a special endpoint.
-        // For simplicity, we'll use the messages list to find our uid's DB id.
-        this.findAndLoadMessage(accountId!, folder, Number(uid));
+    this.http.get<{ data: MailMessage }>(`${environment.apiBaseUrl}/mail/messages/by-uid?accountId=${accountId}&folder=${encodeURIComponent(folder)}&uid=${uid}`).subscribe({
+      next: (r) => {
+        this.message.set(r.data);
+        if (r.data.bodyHtml) {
+          this.cachedSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;font-size:14px;color:#333;margin:16px;word-wrap:break-word;}img{max-width:100%;height:auto;}</style></head><body>${r.data.bodyHtml}</body></html>`;
+        }
+        this.loading.set(false);
+        this.needsResize = true;
       },
       error: () => { this.loading.set(false); },
-    });
-  }
-
-  private findAndLoadMessage(accountId: string, folder: string, uid: number): void {
-    // Load messages to ensure cache, then find by uid
-    this.http.get<{ data: Array<{ uid: number }> }>(
-      `${environment.apiBaseUrl}/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&page=1&limit=200`,
-    ).subscribe({
-      next: () => {
-        // Query local DB for this specific message
-        // We need an endpoint that finds by account+folder+uid — let's use a search
-        // For now, we'll use a workaround: fetch all cached messages and find by uid
-        this.http.get<{ data: Array<{ id: string; uid: number; folder: string }> }>(
-          `${environment.apiBaseUrl}/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&page=1&limit=200`,
-        ).subscribe({
-          next: (r) => {
-            // The response has uid but not DB id directly. We need to query by uid.
-            // Let's add an endpoint. For now, search through cached DB messages.
-            // Actually, the messages are cached in DB during the list call.
-            // We need to query by mailAccountId + folder + uid.
-            // Use a simple approach: search in the DB cache table
-            this.loadByUid(accountId, folder, uid);
-          },
-        });
-      },
-    });
-  }
-
-  private loadByUid(accountId: string, folder: string, uid: number): void {
-    // Find the DB record
-    this.http.get<{ data: Array<{ uid: number; messageId: string | null; fromAddress: string; fromName: string | null; subject: string | null; sentAt: string; isRead: boolean; isFlagged: boolean; hasAttachments: boolean }> }>(
-      `${environment.apiBaseUrl}/mail/accounts/${accountId}/messages?folder=${encodeURIComponent(folder)}&page=1&limit=200`,
-    ).subscribe({
-      next: () => {
-        // The message should now be in DB. Find its DB id by querying the mail_message table.
-        // We need a lookup endpoint. Let me use a workaround with the existing API.
-        // The reader needs the DB id to call GET /mail/messages/:id
-        // Let's add this as a query param endpoint
-        this.http.get<{ data: MailMessage }>(`${environment.apiBaseUrl}/mail/messages/by-uid?accountId=${accountId}&folder=${encodeURIComponent(folder)}&uid=${uid}`).subscribe({
-          next: (r) => { this.message.set(r.data); this.loading.set(false); this.needsResize = true; },
-          error: () => { this.loading.set(false); },
-        });
-      },
     });
   }
 
@@ -197,7 +154,6 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
 
   sanitizedHtml(): SafeResourceUrl {
     const html = this.message()?.bodyHtml ?? '';
-    // Wrap in basic HTML document for iframe
     const doc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;font-size:14px;color:#333;margin:16px;word-wrap:break-word;}img{max-width:100%;height:auto;}</style></head><body>${html}</body></html>`;
     return this.sanitizer.bypassSecurityTrustHtml(doc);
   }
