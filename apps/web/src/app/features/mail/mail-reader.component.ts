@@ -52,7 +52,7 @@ interface MailMessage {
           <div class="flex items-start justify-between">
             <div>
               <div class="flex items-center gap-2 mb-1">
-                <div class="w-10 h-10 bg-blue-100 text-blue-400 rounded-full flex items-center justify-center font-bold text-lg">
+                <div class="w-10 h-10 bg-blue-100 text-gray-300 rounded-full flex items-center justify-center font-bold text-lg">
                   {{ (message()!.fromName || message()!.fromAddress).charAt(0).toUpperCase() }}
                 </div>
                 <div>
@@ -114,9 +114,9 @@ interface MailMessage {
           <div class="flex flex-wrap gap-2 mb-3">
             @for (link of entityLinks; track link.id) {
               <span class="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-sm">
-                <span class="text-blue-400 font-medium">{{ link.entityType }}</span>
+                <span class="text-gray-300 font-medium">{{ link.entityType }}</span>
                 <span class="text-blue-600">{{ link.entityName || link.entityId }}</span>
-                <button class="text-blue-400 hover:text-red-500 ml-1" (click)="removeLink(link.id)"><i class="pi pi-times text-xs"></i></button>
+                <button class="text-gray-300 hover:text-red-500 ml-1" (click)="removeLink(link.id)"><i class="pi pi-times text-xs"></i></button>
               </span>
             }
             @if (entityLinks.length === 0) {

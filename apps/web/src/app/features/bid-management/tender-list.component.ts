@@ -116,7 +116,7 @@ interface TenderRow {
             <tr class="cursor-pointer hover:bg-gray-50" (click)="goToTender(t.id)">
               <td>
                 <div>
-                  <span class="font-medium text-blue-400">{{ t.tenderNumber }}</span>
+                  <span class="font-medium text-gray-300">{{ t.tenderNumber }}</span>
                   @if (t.tenderTitle) {
                     <div class="text-xs text-gray-500 truncate max-w-[200px]">{{ t.tenderTitle }}</div>
                   }
