@@ -157,6 +157,9 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 | Activity tabs revamp | 🟢 | Current (today+past open) / Upcoming (tomorrow+day after) / Planned (future) / Completed / All. Default: Current. |
 | Opportunity list filters | 🟢 | Open/Closed/All toggle (default: Open), BU filter, Account filter. Default stage: lowercase 'capture'. |
 | Close & Add New (Activities) | 🟢 | Edit task → set Closed → "Close & Add New" button closes task and opens pre-filled create form (category, assignee, contacts, linked objects). |
+| Initiative entity linking | 🟢 | Activities + Emails linkable to INITIATIVE. Activity list/calendar entity type dropdowns, mail API LINK_ENTITY_TYPES, mail-reader entity linking UI. |
+| Mail: Move between folders | 🟢 | Generic POST /move-messages endpoint. "Move to" popup menu in inbox toolbar + email reader header. |
+| Mail: AI Email Assistant | 🟢 | Collapsible AI section in email detail. Auto-summarize on expand via Gemini, cached in DB (ai_summary field). Draft reply with optional user prompt. "Use as Reply" opens compose. |
 
 ## R10 — Remaining Organization Masters & Platform Hardening
 

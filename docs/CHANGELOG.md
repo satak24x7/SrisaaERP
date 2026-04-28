@@ -4,6 +4,14 @@ All notable changes to the GovProjects Platform. Based on [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added (2026-04-29 — Session 9: Mail AI, Move Folders, Initiative Linking, UX)
+- **AI Email Assistant** — Collapsible "AI Assistant" section in email detail (above body). Auto-summarizes email via Gemini on first expand. Summary cached in DB (`ai_summary` + `ai_summarized_at` on `mail_message`). Regenerate button for fresh summary. Draft reply with optional user prompt guidance. "Use as Reply" opens compose dialog pre-filled with AI draft. New Gemini functions: `summarizeEmail()`, `draftEmailReply()`, shared `callGemini()` helper. API: `POST /messages/:id/ai-summarize` (cached), `POST /messages/:id/ai-draft`.
+- **Mail: Move between folders** — Generic `POST /accounts/:id/move-messages` endpoint accepting `{ folder, uids, toFolder }`. "Move to" popup menu (PrimeNG Menu) in inbox toolbar when messages selected + in email reader header. Lists all folders except current with folder icons.
+- **Initiative entity linking** — INITIATIVE added as linkable entity type for Activities (list + calendar entity type dropdowns, options loading, getEntityOptions switch) and Emails (API `LINK_ENTITY_TYPES`, mail-reader entity linking UI, entity name resolution). Activity API already supported INITIATIVE; calendar component also gained missing PROJECT option loading.
+
+### Fixed (2026-04-29)
+- **Table link colors** — Removed `text-blue-700` from clickable title columns in Pipeline, Initiatives, and Project Dashboard tables. Titles now use default text color matching the Opportunities fix.
+
 ### Added (2026-04-28 — Session 8: Expense Sheets, Finance, Travel Attachments, UX Improvements)
 - **Expense Sheets (MVP)** — `ExpenseSheet` + `ExpenseLine` CRUD under Work Area > Expenses. Sheet types: Pre-Project, During-Project, Admin/General, Reimbursement. Line items with date, category, vendor, description, amount, GST, payment mode, bill attachment (file upload). Status workflow: DRAFT → SUBMITTED → APPROVED → REJECTED → PAID. Event-sourced status transitions via `expense_sheet_event`. Auto-recalculates sheet total on line changes. Summary cards with lines total, GST total, grand total.
 - **Travel proof attachments** — File upload/download on Tickets, Hotels, and Expenses in Travel Plans. Multer-based upload with 10MB limit. Stored in `uploads/travel/{tickets,hotels,expenses}/` with ULID filenames. Proof column in tables with clickable download links. Existing attachment shown in edit dialog with remove button.
