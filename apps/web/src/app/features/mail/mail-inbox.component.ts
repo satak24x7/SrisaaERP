@@ -1,6 +1,6 @@
 import { Component, OnInit, inject, signal, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ButtonModule } from 'primeng/button';
@@ -142,6 +142,7 @@ interface MessageRow {
 })
 export class MailInboxComponent implements OnInit {
   readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly http = inject(HttpClient);
   private readonly msg = inject(MessageService);
   private readonly confirm = inject(ConfirmationService);
@@ -167,6 +168,10 @@ export class MailInboxComponent implements OnInit {
   private uidToDbId = new Map<number, string>();
 
   ngOnInit(): void {
+    // Restore folder from query params (when returning from reader)
+    const qFolder = this.route.snapshot.queryParamMap.get('folder');
+    if (qFolder) this.selectedFolder = qFolder;
+
     this.http.get<{ data: MailAccount[] }>(`${environment.apiBaseUrl}/mail/accounts`).subscribe({
       next: (r) => {
         this.accounts.set(r.data);
@@ -219,6 +224,12 @@ export class MailInboxComponent implements OnInit {
         this.messages.set(r.data);
         this.totalMessages = r.meta.total;
         this.loadingMessages.set(false);
+        // Restore scroll position if returning from reader
+        const savedScroll = sessionStorage.getItem('mail-inbox-scroll');
+        if (savedScroll) {
+          sessionStorage.removeItem('mail-inbox-scroll');
+          setTimeout(() => window.scrollTo({ top: Number(savedScroll) }), 0);
+        }
       },
       error: () => {
         this.loadingMessages.set(false);
@@ -228,19 +239,7 @@ export class MailInboxComponent implements OnInit {
   }
 
   openMessage(m: MessageRow): void {
-    // Find the DB record by uid+folder+account
-    this.http.get<{ data: MessageRow[]; meta: { total: number } }>(
-      `${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/messages?folder=${encodeURIComponent(this.selectedFolder)}&page=1&limit=1`,
-    ).subscribe(); // ensure it's cached
-
-    // Navigate using a query param approach — the reader will fetch by DB id
-    // First we need to find the DB id. Let's do a simple search.
-    this.http.get<{ data: Array<{ id: string; uid: number }> }>(
-      `${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/messages?folder=${encodeURIComponent(this.selectedFolder)}&page=${this.currentPage}&limit=${this.pageSize}`,
-    ).subscribe(); // cache is already loaded
-
-    // Use the cached message endpoint — we need to look up by account+folder+uid
-    // For now, navigate with query params and let reader handle it
+    sessionStorage.setItem('mail-inbox-scroll', String(window.scrollY));
     this.router.navigate(['/mail/message', this.selectedAccountId], {
       queryParams: { folder: this.selectedFolder, uid: m.uid },
     });

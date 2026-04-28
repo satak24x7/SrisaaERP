@@ -288,7 +288,10 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
     });
   }
 
-  goBack(): void { this.router.navigate(['/mail/inbox']); }
+  goBack(): void {
+    const folder = this.route.snapshot.queryParamMap.get('folder') ?? 'INBOX';
+    this.router.navigate(['/mail/inbox'], { queryParams: { folder } });
+  }
 
   sanitizedHtml(): SafeResourceUrl {
     const html = this.message()?.bodyHtml ?? '';
