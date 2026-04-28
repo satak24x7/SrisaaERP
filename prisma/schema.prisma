@@ -1865,6 +1865,7 @@ model MailAccount {
   userId        String  @map("user_id") @db.VarChar(26)
   label         String  @db.VarChar(128)
   emailAddress  String  @map("email_address") @db.VarChar(255)
+  senderName    String? @map("sender_name") @db.VarChar(255)
 
   imapHost      String  @map("imap_host") @db.VarChar(255)
   imapPort      Int     @map("imap_port")

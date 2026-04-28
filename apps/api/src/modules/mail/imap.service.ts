@@ -235,3 +235,24 @@ export async function streamAttachment(
     contentType: att.contentType ?? 'application/octet-stream',
   };
 }
+
+export async function deleteMessages(
+  account: MailAccountRow,
+  folder: string,
+  uids: number[],
+): Promise<void> {
+  if (uids.length === 0) return;
+  const client = createClient(account);
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock(folder);
+    try {
+      // Mark as deleted and expunge
+      await client.messageDelete(uids.map(String).join(','), { uid: true });
+    } finally {
+      lock.release();
+    }
+  } finally {
+    try { await client.logout(); } catch { /* ignore */ }
+  }
+}

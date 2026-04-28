@@ -17,7 +17,7 @@ import { ConfirmationService, MessageService } from 'primeng/api';
 import { environment } from '../../../environments/environment';
 
 interface MailAccount {
-  id: string; label: string; emailAddress: string;
+  id: string; label: string; emailAddress: string; senderName: string | null;
   imapHost: string; imapPort: number; imapSsl: boolean;
   smtpHost: string; smtpPort: number; smtpSsl: boolean;
   isActive: boolean; lastSyncAt: string | null; lastSyncError: string | null;
@@ -87,6 +87,10 @@ interface MailAccount {
           </div>
         </div>
         <div class="flex flex-col gap-1">
+          <label class="text-sm font-medium text-gray-700">Sender Name</label>
+          <input pInputText formControlName="senderName" placeholder="e.g. Srisaa Tech" class="w-full" />
+        </div>
+        <div class="flex flex-col gap-1">
           <label class="text-sm font-medium text-gray-700">Password *</label>
           <div class="flex gap-2">
             <input pInputText formControlName="password" [type]="showPassword ? 'text' : 'password'" class="flex-1" />
@@ -147,6 +151,7 @@ export class MailSettingsComponent implements OnInit {
   form = this.fb.group({
     label: ['', [Validators.required, Validators.maxLength(128)]],
     emailAddress: ['', [Validators.required, Validators.email]],
+    senderName: [''],
     password: ['', Validators.required],
     imapHost: ['imap.secureserver.net', Validators.required],
     imapPort: [993, Validators.required],
@@ -169,7 +174,7 @@ export class MailSettingsComponent implements OnInit {
     if (account) {
       this.editId = account.id;
       this.form.patchValue({
-        label: account.label, emailAddress: account.emailAddress, password: '',
+        label: account.label, emailAddress: account.emailAddress, senderName: account.senderName ?? '', password: '',
         imapHost: account.imapHost, imapPort: account.imapPort,
         smtpHost: account.smtpHost, smtpPort: account.smtpPort,
       });
@@ -189,7 +194,7 @@ export class MailSettingsComponent implements OnInit {
     this.saving = true; this.dialogError = '';
     const v = this.form.value;
     const body: Record<string, unknown> = {
-      label: v.label, emailAddress: v.emailAddress,
+      label: v.label, emailAddress: v.emailAddress, senderName: v.senderName || null,
       imapHost: v.imapHost, imapPort: v.imapPort, imapSsl: true,
       smtpHost: v.smtpHost, smtpPort: v.smtpPort, smtpSsl: true,
     };

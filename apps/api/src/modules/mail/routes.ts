@@ -32,6 +32,7 @@ const AttachParams = z.object({ id: z.string().min(1).max(26), idx: z.coerce.num
 const CreateAccount = z.object({
   label: z.string().min(1).max(128),
   emailAddress: z.string().email().max(255),
+  senderName: z.string().max(255).optional(),
   imapHost: z.string().min(1).max(255),
   imapPort: z.coerce.number().int().min(1).max(65535).default(993),
   imapSsl: z.boolean().default(true),
@@ -44,6 +45,7 @@ const CreateAccount = z.object({
 const UpdateAccount = z.object({
   label: z.string().min(1).max(128).optional(),
   emailAddress: z.string().email().max(255).optional(),
+  senderName: z.string().max(255).nullable().optional(),
   imapHost: z.string().min(1).max(255).optional(),
   imapPort: z.coerce.number().int().min(1).max(65535).optional(),
   imapSsl: z.boolean().optional(),
@@ -66,6 +68,7 @@ const ListMessagesQuery = z.object({
 function accountToDto(row: Record<string, unknown>) {
   return {
     id: row.id, label: row.label, emailAddress: row.emailAddress,
+    senderName: row.senderName ?? null,
     imapHost: row.imapHost, imapPort: row.imapPort, imapSsl: row.imapSsl,
     smtpHost: row.smtpHost, smtpPort: row.smtpPort, smtpSsl: row.smtpSsl,
     isActive: row.isActive,
@@ -102,7 +105,7 @@ mailRouter.post('/accounts', validate({ body: CreateAccount }), asyncHandler(asy
 
   await prisma.mailAccount.create({
     data: {
-      id, userId, label: body.label, emailAddress: body.emailAddress,
+      id, userId, label: body.label, emailAddress: body.emailAddress, senderName: body.senderName ?? null,
       imapHost: body.imapHost, imapPort: body.imapPort, imapSsl: body.imapSsl,
       smtpHost: body.smtpHost, smtpPort: body.smtpPort, smtpSsl: body.smtpSsl,
       encryptedPass: encrypted, passIv: iv, passTag: tag,
@@ -164,6 +167,26 @@ mailRouter.get('/accounts/:id/folders', validate({ params: IdParams }), asyncHan
   const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
   if (!account) throw errors.notFound('Mail account not found');
   const folders = await imapService.fetchFolders(account as unknown as Parameters<typeof imapService.fetchFolders>[0]);
+
+  // Supplement with unread counts from DB cache
+  const cachedCounts = await prisma.mailMessage.groupBy({
+    by: ['folder'],
+    where: { mailAccountId: account.id },
+    _count: { id: true },
+  });
+  const unreadCounts = await prisma.mailMessage.groupBy({
+    by: ['folder'],
+    where: { mailAccountId: account.id, isRead: false },
+    _count: { id: true },
+  });
+  const countMap = new Map(cachedCounts.map((c) => [c.folder, c._count.id]));
+  const unreadMap = new Map(unreadCounts.map((c) => [c.folder, c._count.id]));
+
+  for (const f of folders) {
+    if (countMap.has(f.path)) f.messagesCount = countMap.get(f.path)!;
+    if (unreadMap.has(f.path)) f.unseenCount = unreadMap.get(f.path)!;
+  }
+
   res.json({ data: folders });
 }));
 
@@ -359,6 +382,64 @@ mailRouter.get('/messages/:id/attachment/:idx', validate({ params: AttachParams 
   res.send(att.content);
 }));
 
+// ===== Delete messages =====
+
+/* DELETE /messages/:id — delete single message */
+mailRouter.delete('/messages/:id', validate({ params: MsgIdParams }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const cached = await prisma.mailMessage.findFirst({
+    where: { id: req.params.id as string },
+    include: { mailAccount: true },
+  });
+  if (!cached || cached.mailAccount.userId !== userId) throw errors.notFound('Message not found');
+
+  // Delete from IMAP if it's a real message (positive uid)
+  if (cached.uid > 0) {
+    try {
+      await imapService.deleteMessages(
+        cached.mailAccount as unknown as Parameters<typeof imapService.deleteMessages>[0],
+        cached.folder, [cached.uid],
+      );
+    } catch { /* IMAP delete failed — still remove from cache */ }
+  }
+
+  // Remove from local cache
+  await prisma.mailMessage.delete({ where: { id: cached.id } });
+  res.status(204).end();
+}));
+
+/* POST /accounts/:id/delete-messages — bulk delete */
+const BulkDeleteBody = z.object({
+  folder: z.string().min(1),
+  uids: z.array(z.coerce.number().int()).min(1),
+});
+
+mailRouter.post('/accounts/:id/delete-messages', validate({ params: IdParams, body: BulkDeleteBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
+  if (!account) throw errors.notFound('Mail account not found');
+
+  const body = req.body as z.infer<typeof BulkDeleteBody>;
+  const realUids = body.uids.filter((u) => u > 0);
+
+  // Delete from IMAP
+  if (realUids.length > 0) {
+    try {
+      await imapService.deleteMessages(
+        account as unknown as Parameters<typeof imapService.deleteMessages>[0],
+        body.folder, realUids,
+      );
+    } catch { /* continue to remove from cache */ }
+  }
+
+  // Remove from local cache
+  await prisma.mailMessage.deleteMany({
+    where: { mailAccountId: account.id, folder: body.folder, uid: { in: body.uids } },
+  });
+
+  res.json({ data: { deleted: body.uids.length } });
+}));
+
 // ===== Phase 2: Compose / Reply / Forward =====
 
 const SendMailBody = z.object({
@@ -384,7 +465,7 @@ mailRouter.post('/accounts/:id/send', validate({ params: IdParams, body: SendMai
   // Cache sent message locally
   await prisma.mailMessage.create({
     data: {
-      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: 0,
+      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: -(Date.now() % 2147483647),
       messageId: result.messageId, fromAddress: account.emailAddress, fromName: null,
       toAddresses: body.to.map((a) => ({ address: a, name: null })),
       ccAddresses: body.cc?.map((a) => ({ address: a, name: null })),
@@ -439,7 +520,7 @@ mailRouter.post('/messages/:id/reply', validate({ params: MsgIdParams, body: Rep
   // Cache sent reply
   await prisma.mailMessage.create({
     data: {
-      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: 0,
+      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: -(Date.now() % 2147483647),
       messageId: result.messageId, inReplyTo: msg.messageId,
       fromAddress: account.emailAddress, fromName: null,
       toAddresses: toAddrs.map((a) => ({ address: a, name: null })),
@@ -479,7 +560,7 @@ mailRouter.post('/messages/:id/forward', validate({ params: MsgIdParams, body: F
 
   await prisma.mailMessage.create({
     data: {
-      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: 0,
+      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: -(Date.now() % 2147483647),
       messageId: result.messageId, fromAddress: account.emailAddress, fromName: null,
       toAddresses: body.to.map((a) => ({ address: a, name: null })),
       ccAddresses: body.cc?.map((a) => ({ address: a, name: null })),
@@ -490,4 +571,109 @@ mailRouter.post('/messages/:id/forward', validate({ params: MsgIdParams, body: F
   });
 
   res.json({ data: { messageId: result.messageId } });
+}));
+
+// ===== Phase 3: Entity Linking =====
+
+const LINK_ENTITY_TYPES = ['OPPORTUNITY', 'LEAD', 'ACCOUNT', 'PROJECT'] as const;
+const CreateLinkBody = z.object({
+  entityType: z.enum(LINK_ENTITY_TYPES),
+  entityId: z.string().min(1).max(26),
+});
+
+/* POST /messages/:id/links — link email to entity */
+mailRouter.post('/messages/:id/links', validate({ params: MsgIdParams, body: CreateLinkBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const msg = await prisma.mailMessage.findFirst({
+    where: { id: req.params.id as string },
+    include: { mailAccount: { select: { userId: true } } },
+  });
+  if (!msg || msg.mailAccount.userId !== userId) throw errors.notFound('Message not found');
+
+  const body = req.body as z.infer<typeof CreateLinkBody>;
+  const existing = await prisma.mailEntityLink.findUnique({
+    where: { mailMessageId_entityType_entityId: { mailMessageId: msg.id, entityType: body.entityType, entityId: body.entityId } },
+  });
+  if (existing) { res.json({ data: { id: existing.id } }); return; }
+
+  const link = await prisma.mailEntityLink.create({
+    data: { id: newId(), mailMessageId: msg.id, entityType: body.entityType, entityId: body.entityId, createdBy: actorId(req) },
+  });
+  res.status(201).json({ data: { id: link.id } });
+}));
+
+/* DELETE /messages/:id/links/:linkId — remove link */
+const LinkIdParams = z.object({ id: z.string().min(1).max(26), linkId: z.string().min(1).max(26) });
+mailRouter.delete('/messages/:id/links/:linkId', validate({ params: LinkIdParams }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const link = await prisma.mailEntityLink.findFirst({
+    where: { id: req.params.linkId as string, mailMessageId: req.params.id as string },
+    include: { mailMessage: { include: { mailAccount: { select: { userId: true } } } } },
+  });
+  if (!link || link.mailMessage.mailAccount.userId !== userId) throw errors.notFound('Link not found');
+  await prisma.mailEntityLink.delete({ where: { id: link.id } });
+  res.status(204).end();
+}));
+
+/* GET /messages/:id/links — list links for a message */
+mailRouter.get('/messages/:id/links', validate({ params: MsgIdParams }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const msg = await prisma.mailMessage.findFirst({
+    where: { id: req.params.id as string },
+    include: { mailAccount: { select: { userId: true } } },
+  });
+  if (!msg || msg.mailAccount.userId !== userId) throw errors.notFound('Message not found');
+
+  const links = await prisma.mailEntityLink.findMany({ where: { mailMessageId: msg.id } });
+
+  const enriched: Array<{ id: string; entityType: string; entityId: string; entityName: string | null }> = [];
+  for (const link of links) {
+    let name: string | null = null;
+    try {
+      if (link.entityType === 'OPPORTUNITY') {
+        const e = await prisma.opportunity.findUnique({ where: { id: link.entityId }, select: { title: true } });
+        name = e?.title ?? null;
+      } else if (link.entityType === 'LEAD') {
+        const e = await prisma.lead.findUnique({ where: { id: link.entityId }, select: { title: true } });
+        name = e?.title ?? null;
+      } else if (link.entityType === 'ACCOUNT') {
+        const e = await prisma.account.findUnique({ where: { id: link.entityId }, select: { name: true } });
+        name = e?.name ?? null;
+      } else if (link.entityType === 'PROJECT') {
+        const e = await prisma.project.findUnique({ where: { id: link.entityId }, select: { name: true } });
+        name = e?.name ?? null;
+      }
+    } catch { /* ignore */ }
+    enriched.push({ id: link.id, entityType: link.entityType, entityId: link.entityId, entityName: name });
+  }
+
+  res.json({ data: enriched });
+}));
+
+/* GET /entity-links — reverse lookup: emails linked to an entity */
+const EntityLinkQuery = z.object({
+  entityType: z.enum(LINK_ENTITY_TYPES),
+  entityId: z.string().min(1).max(26),
+});
+mailRouter.get('/entity-links', validate({ query: EntityLinkQuery }), asyncHandler(async (req, res) => {
+  const q = req.query as unknown as z.infer<typeof EntityLinkQuery>;
+  const links = await prisma.mailEntityLink.findMany({
+    where: { entityType: q.entityType, entityId: q.entityId },
+    include: {
+      mailMessage: {
+        select: { id: true, fromAddress: true, fromName: true, subject: true, sentAt: true, folder: true },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  res.json({
+    data: links.map((l) => ({
+      id: l.id, entityType: l.entityType, entityId: l.entityId,
+      message: {
+        id: l.mailMessage.id, fromAddress: l.mailMessage.fromAddress, fromName: l.mailMessage.fromName,
+        subject: l.mailMessage.subject, sentAt: l.mailMessage.sentAt.toISOString(), folder: l.mailMessage.folder,
+      },
+    })),
+  });
 }));

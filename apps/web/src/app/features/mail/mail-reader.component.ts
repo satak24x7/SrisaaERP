@@ -3,8 +3,10 @@ import type { MailComposeComponent as MailComposeType } from './mail-compose.com
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
+import { FormsModule } from '@angular/forms';
 import { ButtonModule } from 'primeng/button';
 import { TagModule } from 'primeng/tag';
+import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
@@ -25,7 +27,7 @@ interface MailMessage {
 @Component({
   selector: 'app-mail-reader',
   standalone: true,
-  imports: [CommonModule, ButtonModule, TagModule, ToastModule, MailComposeComponent],
+  imports: [CommonModule, FormsModule, ButtonModule, TagModule, SelectModule, ToastModule, MailComposeComponent],
   providers: [MessageService],
   template: `
     <p-toast />
@@ -41,6 +43,7 @@ interface MailMessage {
             <p-button label="Reply" icon="pi pi-reply" size="small" [outlined]="true" (onClick)="reply()" />
             <p-button label="Reply All" icon="pi pi-reply" size="small" [outlined]="true" (onClick)="replyAll()" />
             <p-button label="Forward" icon="pi pi-arrow-right" size="small" [outlined]="true" (onClick)="forward()" />
+            <p-button icon="pi pi-trash" size="small" severity="danger" [outlined]="true" (onClick)="deleteMessage()" [loading]="deleting" />
           </div>
         </div>
 
@@ -103,6 +106,30 @@ interface MailMessage {
             </div>
           </div>
         }
+        <!-- Linked Entities -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5 mt-4">
+          <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <i class="pi pi-link"></i> Linked To
+          </h3>
+          <div class="flex flex-wrap gap-2 mb-3">
+            @for (link of entityLinks; track link.id) {
+              <span class="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-sm">
+                <span class="text-blue-700 font-medium">{{ link.entityType }}</span>
+                <span class="text-blue-600">{{ link.entityName || link.entityId }}</span>
+                <button class="text-blue-400 hover:text-red-500 ml-1" (click)="removeLink(link.id)"><i class="pi pi-times text-xs"></i></button>
+              </span>
+            }
+            @if (entityLinks.length === 0) {
+              <span class="text-gray-400 text-sm">No linked entities</span>
+            }
+          </div>
+          <div class="flex gap-2 items-end">
+            <p-select appendTo="body" [(ngModel)]="linkEntityType" [options]="entityTypeOptions" optionLabel="label" optionValue="value" placeholder="Type" class="w-40" (onChange)="loadEntityOptions()" />
+            <p-select appendTo="body" [(ngModel)]="linkEntityId" [options]="entityOptions" optionLabel="name" optionValue="id" [filter]="true" placeholder="Search..." class="flex-1" />
+            <p-button icon="pi pi-plus" label="Link" size="small" [disabled]="!linkEntityType || !linkEntityId" (onClick)="addLink()" />
+          </div>
+        </div>
+
       } @else {
         <div class="text-center py-16 text-gray-400">
           <i class="pi pi-envelope text-5xl mb-4"></i>
@@ -128,7 +155,20 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
   message = signal<MailMessage | null>(null);
   loading = signal(true);
   cachedSrcdoc = '';
+  deleting = false;
   private needsResize = false;
+
+  // Entity linking
+  entityLinks: Array<{ id: string; entityType: string; entityId: string; entityName: string | null }> = [];
+  linkEntityType = '';
+  linkEntityId = '';
+  entityOptions: Array<{ id: string; name: string }> = [];
+  entityTypeOptions = [
+    { label: 'Opportunity', value: 'OPPORTUNITY' },
+    { label: 'Lead', value: 'LEAD' },
+    { label: 'Account', value: 'ACCOUNT' },
+    { label: 'Project', value: 'PROJECT' },
+  ];
 
   ngOnInit(): void {
     const accountId = this.route.snapshot.paramMap.get('id');
@@ -149,6 +189,7 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
         }
         this.loading.set(false);
         this.needsResize = true;
+        this.loadLinks();
       },
       error: () => { this.loading.set(false); },
     });
@@ -159,6 +200,59 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
       this.resizeIframe();
       this.needsResize = false;
     }
+  }
+
+  private loadLinks(): void {
+    const m = this.message();
+    if (!m) return;
+    this.http.get<{ data: Array<{ id: string; entityType: string; entityId: string; entityName: string | null }> }>(`${environment.apiBaseUrl}/mail/messages/${m.id}/links`).subscribe({
+      next: (r) => { this.entityLinks = r.data; },
+    });
+  }
+
+  loadEntityOptions(): void {
+    this.linkEntityId = '';
+    this.entityOptions = [];
+    if (!this.linkEntityType) return;
+    let url = '';
+    switch (this.linkEntityType) {
+      case 'OPPORTUNITY': url = `${environment.apiBaseUrl}/opportunities?limit=200&openStatus=all`; break;
+      case 'LEAD': url = `${environment.apiBaseUrl}/leads?limit=200`; break;
+      case 'ACCOUNT': url = `${environment.apiBaseUrl}/accounts?limit=200`; break;
+      case 'PROJECT': url = `${environment.apiBaseUrl}/projects?limit=200`; break;
+    }
+    this.http.get<{ data: Array<{ id: string; title?: string; name?: string }> }>(url).subscribe({
+      next: (r) => { this.entityOptions = r.data.map((e) => ({ id: e.id, name: e.title ?? e.name ?? e.id })); },
+    });
+  }
+
+  addLink(): void {
+    const m = this.message();
+    if (!m || !this.linkEntityType || !this.linkEntityId) return;
+    this.http.post(`${environment.apiBaseUrl}/mail/messages/${m.id}/links`, {
+      entityType: this.linkEntityType, entityId: this.linkEntityId,
+    }).subscribe({
+      next: () => { this.msg.add({ severity: 'success', summary: 'Linked' }); this.loadLinks(); this.linkEntityType = ''; this.linkEntityId = ''; },
+      error: () => { this.msg.add({ severity: 'error', summary: 'Failed to link' }); },
+    });
+  }
+
+  removeLink(linkId: string): void {
+    const m = this.message();
+    if (!m) return;
+    this.http.delete(`${environment.apiBaseUrl}/mail/messages/${m.id}/links/${linkId}`).subscribe({
+      next: () => { this.entityLinks = this.entityLinks.filter((l) => l.id !== linkId); },
+    });
+  }
+
+  deleteMessage(): void {
+    const m = this.message();
+    if (!m) return;
+    this.deleting = true;
+    this.http.delete(`${environment.apiBaseUrl}/mail/messages/${m.id}`).subscribe({
+      next: () => { this.deleting = false; this.msg.add({ severity: 'success', summary: 'Deleted' }); this.goBack(); },
+      error: () => { this.deleting = false; this.msg.add({ severity: 'error', summary: 'Failed to delete' }); },
+    });
   }
 
   reply(): void {

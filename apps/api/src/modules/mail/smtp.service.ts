@@ -23,7 +23,7 @@ export interface SendMailOptions {
   attachments?: Array<{ filename: string; content: Buffer; contentType: string }>;
 }
 
-export async function sendMail(account: MailAccountRow, opts: SendMailOptions): Promise<{ messageId: string }> {
+export async function sendMail(account: MailAccountRow & { senderName?: string | null }, opts: SendMailOptions): Promise<{ messageId: string }> {
   const password = decrypt(account.encryptedPass, account.passIv, account.passTag);
 
   const transport = nodemailer.createTransport({
@@ -35,8 +35,12 @@ export async function sendMail(account: MailAccountRow, opts: SendMailOptions): 
     greetingTimeout: 15000,
   });
 
+  const fromAddress = account.senderName
+    ? `"${account.senderName}" <${account.emailAddress}>`
+    : account.emailAddress;
+
   const info = await transport.sendMail({
-    from: account.emailAddress,
+    from: fromAddress,
     to: opts.to.join(', '),
     cc: opts.cc?.join(', '),
     bcc: opts.bcc?.join(', '),

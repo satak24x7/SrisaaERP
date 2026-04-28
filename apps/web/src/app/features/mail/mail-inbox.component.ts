@@ -8,7 +8,9 @@ import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
-import { MessageService } from 'primeng/api';
+import { CheckboxModule } from 'primeng/checkbox';
+import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { ConfirmationService, MessageService } from 'primeng/api';
 import { environment } from '../../../environments/environment';
 import { MailComposeComponent, type ComposeData } from './mail-compose.component';
 
@@ -24,10 +26,10 @@ interface MessageRow {
 @Component({
   selector: 'app-mail-inbox',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, TableModule, TagModule, SelectModule, ToastModule, MailComposeComponent],
-  providers: [MessageService],
+  imports: [CommonModule, FormsModule, ButtonModule, TableModule, TagModule, SelectModule, ToastModule, CheckboxModule, ConfirmDialogModule, MailComposeComponent],
+  providers: [MessageService, ConfirmationService],
   template: `
-    <p-toast />
+    <p-toast /><p-confirmDialog />
     <div class="p-6">
       <div class="flex items-center justify-between mb-4">
         <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2"><i class="pi pi-envelope text-blue-600"></i> Mail</h2>
@@ -36,6 +38,9 @@ interface MessageRow {
             <p-select [(ngModel)]="selectedAccountId" [options]="accounts()" optionLabel="label" optionValue="id" (onChange)="onAccountChange()" class="w-56" />
           }
           <p-button label="Compose" icon="pi pi-pencil" (onClick)="openCompose()" />
+          @if (selectedUids.length > 0) {
+            <p-button label="Delete ({{ selectedUids.length }})" icon="pi pi-trash" severity="danger" [outlined]="true" (onClick)="bulkDelete()" />
+          }
           <p-button icon="pi pi-refresh" [outlined]="true" (onClick)="refreshMessages()" [loading]="loadingMessages()" />
           <p-button label="Settings" icon="pi pi-cog" severity="secondary" [outlined]="true" (onClick)="router.navigate(['/mail/settings'])" />
         </div>
@@ -76,6 +81,7 @@ interface MessageRow {
               <p-table [value]="messages()" [loading]="loadingMessages()" styleClass="p-datatable-sm" [paginator]="false">
                 <ng-template pTemplate="header">
                   <tr>
+                    <th style="width:40px"><p-checkbox [binary]="true" [(ngModel)]="selectAll" (onChange)="toggleSelectAll()" /></th>
                     <th style="width:30px"></th>
                     <th>From</th>
                     <th>Subject</th>
@@ -84,28 +90,31 @@ interface MessageRow {
                   </tr>
                 </ng-template>
                 <ng-template pTemplate="body" let-m>
-                  <tr class="cursor-pointer hover:bg-blue-50" [class]="!m.isRead ? 'font-semibold' : ''" (click)="openMessage(m)">
-                    <td>
+                  <tr class="cursor-pointer hover:bg-blue-50" [class]="!m.isRead ? 'font-semibold' : ''">
+                    <td (click)="$event.stopPropagation()">
+                      <p-checkbox [binary]="true" [ngModel]="isSelected(m.uid)" (onChange)="toggleSelect(m.uid)" />
+                    </td>
+                    <td (click)="openMessage(m)">
                       @if (!m.isRead) { <span class="inline-block w-2 h-2 rounded-full bg-blue-600"></span> }
                     </td>
-                    <td>
+                    <td (click)="openMessage(m)">
                       <div class="text-sm">{{ m.fromName || m.fromAddress }}</div>
                       @if (m.fromName) { <div class="text-xs text-gray-400">{{ m.fromAddress }}</div> }
                     </td>
-                    <td>
+                    <td (click)="openMessage(m)">
                       <div class="text-sm flex items-center gap-2">
                         {{ m.subject || '(no subject)' }}
                         @if (m.hasAttachments) { <i class="pi pi-paperclip text-gray-400 text-xs"></i> }
                       </div>
                     </td>
-                    <td class="text-xs text-gray-500">{{ m.sentAt | date:'MMM d, h:mm a' }}</td>
-                    <td>
+                    <td class="text-xs text-gray-500" (click)="openMessage(m)">{{ m.sentAt | date:'MMM d, h:mm a' }}</td>
+                    <td (click)="openMessage(m)">
                       @if (m.isFlagged) { <i class="pi pi-star-fill text-yellow-500 text-xs"></i> }
                     </td>
                   </tr>
                 </ng-template>
                 <ng-template pTemplate="emptymessage">
-                  <tr><td colspan="5" class="text-center text-gray-400 py-12">
+                  <tr><td colspan="6" class="text-center text-gray-400 py-12">
                     @if (loadingMessages()) { Loading messages... }
                     @else { No messages in {{ selectedFolder }} }
                   </td></tr>
@@ -135,6 +144,7 @@ export class MailInboxComponent implements OnInit {
   readonly router = inject(Router);
   private readonly http = inject(HttpClient);
   private readonly msg = inject(MessageService);
+  private readonly confirm = inject(ConfirmationService);
   @ViewChild('composeDialog') composeDialog!: MailComposeComponent;
 
   accounts = signal<MailAccount[]>([]);
@@ -149,6 +159,8 @@ export class MailInboxComponent implements OnInit {
   currentPage = 1;
   pageSize = 50;
   totalMessages = 0;
+  selectedUids: number[] = [];
+  selectAll = false;
   private initialLoadDone = false;
 
   // Map uid → db id for navigation
@@ -231,6 +243,44 @@ export class MailInboxComponent implements OnInit {
     // For now, navigate with query params and let reader handle it
     this.router.navigate(['/mail/message', this.selectedAccountId], {
       queryParams: { folder: this.selectedFolder, uid: m.uid },
+    });
+  }
+
+  isSelected(uid: number): boolean { return this.selectedUids.includes(uid); }
+
+  toggleSelect(uid: number): void {
+    if (this.selectedUids.includes(uid)) {
+      this.selectedUids = this.selectedUids.filter((u) => u !== uid);
+    } else {
+      this.selectedUids = [...this.selectedUids, uid];
+    }
+    this.selectAll = this.selectedUids.length === this.messages().length;
+  }
+
+  toggleSelectAll(): void {
+    if (this.selectAll) {
+      this.selectedUids = this.messages().map((m) => m.uid);
+    } else {
+      this.selectedUids = [];
+    }
+  }
+
+  bulkDelete(): void {
+    this.confirm.confirm({
+      message: `Delete ${this.selectedUids.length} selected email(s)?`,
+      accept: () => {
+        this.http.post(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/delete-messages`, {
+          folder: this.selectedFolder, uids: this.selectedUids,
+        }).subscribe({
+          next: () => {
+            this.msg.add({ severity: 'success', summary: 'Deleted', detail: `${this.selectedUids.length} email(s) deleted` });
+            this.selectedUids = [];
+            this.selectAll = false;
+            this.loadMessages();
+          },
+          error: () => { this.msg.add({ severity: 'error', summary: 'Failed to delete' }); },
+        });
+      },
     });
   }
 

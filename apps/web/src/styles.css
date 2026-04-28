@@ -1,3 +1,16 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Fix PrimeNG table hover on dark theme — white bg makes text invisible */
+.p-datatable .p-datatable-tbody > tr:hover,
+.p-datatable .p-datatable-tbody > tr.p-highlight,
+.p-datatable .p-datatable-tbody > tr.p-row-odd:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: inherit !important;
+}
+
+.p-datatable .p-datatable-tbody > tr.p-highlight {
+  background: rgba(59, 130, 246, 0.15) !important;
+  color: inherit !important;
+}
