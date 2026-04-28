@@ -58,7 +58,7 @@ interface SheetRow {
         </ng-template>
         <ng-template pTemplate="body" let-s>
           <tr class="cursor-pointer" (click)="router.navigate(['/work-area/expense-sheets', s.id])">
-            <td class="font-medium text-blue-700">{{ s.title }}</td>
+            <td class="font-medium text-blue-400">{{ s.title }}</td>
             <td><p-tag [value]="typeLabel(s.sheetType)" severity="info" /></td>
             <td>{{ s.claimantName }}</td>
             <td class="text-sm">{{ s.periodFrom | date:'mediumDate' }} — {{ s.periodTo | date:'mediumDate' }}</td>

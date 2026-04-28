@@ -81,7 +81,7 @@ interface SelectOption { id: string; name: string; }
           </ng-template>
           <ng-template pTemplate="body" let-o>
             <tr class="cursor-pointer hover:bg-gray-50" (click)="openDetail(o)">
-              <td><span class="font-medium text-blue-700">{{ o.title }}</span></td>
+              <td><span class="font-medium text-blue-400">{{ o.title }}</span></td>
               <td><span class="text-sm">{{ o.accountName || '—' }}</span></td>
               <td><span class="text-sm">{{ o.endClientName || '—' }}</span></td>
               <td><span class="text-sm">{{ o.businessUnitName || '—' }}</span></td>
