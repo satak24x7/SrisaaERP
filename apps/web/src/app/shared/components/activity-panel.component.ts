@@ -106,7 +106,9 @@ const TASK_STATUSES = [
             </td>
             <td class="text-sm">{{ a.userName || '-' }}</td>
             <td>
-              @if (a.activityType !== 'EMAIL') {
+              @if (a.activityType === 'EMAIL') {
+                <p-button icon="pi pi-eye" [text]="true" [rounded]="true" size="small" (onClick)="viewEmail(a)" />
+              } @else {
                 <div class="flex gap-1">
                   <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openDialog(a)" />
                   <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteActivity(a.id)" />
@@ -193,6 +195,28 @@ const TASK_STATUSES = [
         <p-button [label]="editId ? 'Update' : 'Create'" icon="pi pi-check" [disabled]="actForm.invalid" (onClick)="saveActivity()" />
       </ng-template>
     </p-dialog>
+
+    <!-- Email Viewer Dialog -->
+    <p-dialog [header]="viewEmailData?.subject || '(no subject)'" [(visible)]="emailDialogVisible" [modal]="true" [style]="{width:'750px', 'max-width': '95vw'}" [maximizable]="true">
+      @if (viewEmailData) {
+        <div class="flex flex-col gap-3">
+          <div class="text-sm text-gray-400">
+            <div><span class="font-medium">From:</span> {{ viewEmailData.fromName || viewEmailData.fromAddress }}</div>
+            <div><span class="font-medium">To:</span> {{ viewEmailData.toAddresses }}</div>
+            <div><span class="font-medium">Date:</span> {{ viewEmailData.sentAt | date:'medium' }}</div>
+          </div>
+          <div class="border-t border-gray-600 pt-3">
+            @if (viewEmailData.bodyHtml) {
+              <iframe [srcdoc]="viewEmailSrcdoc" sandbox="allow-same-origin" class="w-full border-0 min-h-[300px] bg-white rounded"></iframe>
+            } @else {
+              <pre class="text-sm whitespace-pre-wrap font-sans">{{ viewEmailData.bodyText || '(empty)' }}</pre>
+            }
+          </div>
+        </div>
+      } @else {
+        <div class="text-center py-8"><i class="pi pi-spin pi-spinner text-2xl"></i></div>
+      }
+    </p-dialog>
   `,
 })
 export class ActivityPanelComponent implements OnInit {
@@ -225,6 +249,9 @@ export class ActivityPanelComponent implements OnInit {
   dialogVisible = false;
   editId: string | null = null;
   dialogError = '';
+  emailDialogVisible = false;
+  viewEmailData: { subject: string | null; fromAddress: string; fromName: string | null; toAddresses: string; sentAt: string; bodyHtml: string | null; bodyText: string | null } | null = null;
+  viewEmailSrcdoc = '';
 
   actForm = this.fb.group({
     activityType: ['EVENT', Validators.required],
@@ -389,6 +416,35 @@ export class ActivityPanelComponent implements OnInit {
   typeIcon(type: string): string {
     if (type === 'EMAIL') return 'pi pi-envelope';
     return type === 'EVENT' ? 'pi pi-calendar' : 'pi pi-check-square';
+  }
+
+  viewEmail(a: Activity): void {
+    // The id is `email_<linkId>` — find the linked email to get the message DB id
+    const linkId = a.id.replace('email_', '');
+    const emailLink = this.linkedEmails().find((e) => e.id === linkId);
+    if (!emailLink) return;
+
+    this.viewEmailData = null;
+    this.viewEmailSrcdoc = '';
+    this.emailDialogVisible = true;
+
+    // Fetch full message body
+    this.http.get<{ data: { subject: string | null; fromAddress: string; fromName: string | null; toAddresses: Array<{ address: string; name: string | null }>; sentAt: string; bodyHtml: string | null; bodyText: string | null } }>(
+      `${environment.apiBaseUrl}/mail/messages/${emailLink.message.id}`,
+    ).subscribe({
+      next: (r) => {
+        const d = r.data;
+        this.viewEmailData = {
+          subject: d.subject, fromAddress: d.fromAddress, fromName: d.fromName,
+          toAddresses: d.toAddresses.map((a) => a.name ? `${a.name} <${a.address}>` : a.address).join(', '),
+          sentAt: d.sentAt, bodyHtml: d.bodyHtml, bodyText: d.bodyText,
+        };
+        if (d.bodyHtml) {
+          this.viewEmailSrcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:sans-serif;font-size:14px;color:#333;margin:16px;word-wrap:break-word;}img{max-width:100%;height:auto;}</style></head><body>${d.bodyHtml}</body></html>`;
+        }
+      },
+      error: () => { this.emailDialogVisible = false; },
+    });
   }
 
   emailDirection(a: Activity): string {
