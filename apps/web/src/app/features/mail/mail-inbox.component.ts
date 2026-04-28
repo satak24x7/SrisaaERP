@@ -48,6 +48,9 @@ interface MessageRow {
           @if (selectedUids.length > 0) {
             <p-button label="Delete ({{ selectedUids.length }})" icon="pi pi-trash" severity="danger" [outlined]="true" (onClick)="bulkDelete()" />
           }
+          @if (selectedUids.length > 0 && isJunkOrSpam()) {
+            <p-button label="Not Spam ({{ selectedUids.length }})" icon="pi pi-check" severity="success" [outlined]="true" (onClick)="markNotSpam()" />
+          }
           @if (isTrashOrJunk() && messages().length > 0) {
             <p-button label="Empty Folder" icon="pi pi-trash" severity="danger" (onClick)="emptyFolder()" />
           }
@@ -274,6 +277,25 @@ export class MailInboxComponent implements OnInit {
     this.searchQuery = '';
     this.isSearching = false;
     this.loadMessages();
+  }
+
+  isJunkOrSpam(): boolean {
+    const f = this.selectedFolder.toLowerCase();
+    return f.includes('junk') || f.includes('spam');
+  }
+
+  markNotSpam(): void {
+    this.http.post(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/not-spam`, {
+      folder: this.selectedFolder, uids: this.selectedUids,
+    }).subscribe({
+      next: () => {
+        this.msg.add({ severity: 'success', summary: 'Moved to Inbox', detail: `${this.selectedUids.length} message(s) moved` });
+        this.selectedUids = [];
+        this.selectAll = false;
+        this.loadMessages();
+      },
+      error: () => { this.msg.add({ severity: 'error', summary: 'Failed to move' }); },
+    });
   }
 
   isTrashOrJunk(): boolean {

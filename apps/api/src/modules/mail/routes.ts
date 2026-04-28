@@ -484,6 +484,35 @@ mailRouter.post('/accounts/:id/delete-messages', validate({ params: IdParams, bo
   res.json({ data: { deleted: body.uids.length } });
 }));
 
+/* POST /accounts/:id/not-spam — move messages from Junk/Spam to INBOX */
+const NotSpamBody = z.object({
+  folder: z.string().min(1),
+  uids: z.array(z.coerce.number().int()).min(1),
+});
+
+mailRouter.post('/accounts/:id/not-spam', validate({ params: IdParams, body: NotSpamBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
+  if (!account) throw errors.notFound('Mail account not found');
+
+  const body = req.body as z.infer<typeof NotSpamBody>;
+  const realUids = body.uids.filter((u) => u > 0);
+
+  if (realUids.length > 0) {
+    await imapService.moveMessages(
+      account as unknown as Parameters<typeof imapService.moveMessages>[0],
+      body.folder, 'INBOX', realUids,
+    );
+  }
+
+  // Remove from local cache (they'll reappear in INBOX on next refresh)
+  await prisma.mailMessage.deleteMany({
+    where: { mailAccountId: account.id, folder: body.folder, uid: { in: body.uids } },
+  });
+
+  res.json({ data: { moved: body.uids.length } });
+}));
+
 // ===== Phase 2: Compose / Reply / Forward =====
 
 const SendMailBody = z.object({

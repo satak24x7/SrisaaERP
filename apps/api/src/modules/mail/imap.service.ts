@@ -304,6 +304,27 @@ export async function searchMessages(
   }
 }
 
+export async function moveMessages(
+  account: MailAccountRow,
+  fromFolder: string,
+  toFolder: string,
+  uids: number[],
+): Promise<void> {
+  if (uids.length === 0) return;
+  const client = createClient(account);
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock(fromFolder);
+    try {
+      await client.messageMove(uids.map(String).join(','), toFolder, { uid: true });
+    } finally {
+      lock.release();
+    }
+  } finally {
+    try { await client.logout(); } catch { /* ignore */ }
+  }
+}
+
 export async function deleteMessages(
   account: MailAccountRow,
   folder: string,
