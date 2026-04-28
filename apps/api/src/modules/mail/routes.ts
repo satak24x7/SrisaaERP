@@ -254,6 +254,50 @@ mailRouter.get('/accounts/:id/messages', validate({ params: IdParams, query: Lis
   });
 }));
 
+/* GET /accounts/:id/search — search emails via IMAP */
+const SearchQuery = z.object({
+  folder: z.string().default('INBOX'),
+  q: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+mailRouter.get('/accounts/:id/search', validate({ params: IdParams, query: SearchQuery }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
+  if (!account) throw errors.notFound('Mail account not found');
+
+  const q = req.query as unknown as z.infer<typeof SearchQuery>;
+  const result = await imapService.searchMessages(
+    account as unknown as Parameters<typeof imapService.searchMessages>[0],
+    q.folder, q.q, q.limit,
+  );
+
+  // Cache search results
+  for (const msg of result.messages) {
+    await prisma.mailMessage.upsert({
+      where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: q.folder, uid: msg.uid } },
+      create: {
+        id: newId(), mailAccountId: account.id, folder: q.folder, uid: msg.uid,
+        messageId: msg.messageId, inReplyTo: msg.inReplyTo,
+        fromAddress: msg.fromAddress, fromName: msg.fromName,
+        toAddresses: msg.toAddresses, ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
+        subject: msg.subject, sentAt: msg.sentAt,
+        isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
+      },
+      update: { isRead: msg.isRead, isFlagged: msg.isFlagged },
+    });
+  }
+
+  res.json({
+    data: result.messages.map((m) => ({
+      uid: m.uid, messageId: m.messageId, fromAddress: m.fromAddress, fromName: m.fromName,
+      toAddresses: m.toAddresses, subject: m.subject,
+      sentAt: m.sentAt.toISOString(), isRead: m.isRead, isFlagged: m.isFlagged,
+      hasAttachments: m.hasAttachments,
+    })),
+    meta: { total: result.total, folder: q.folder, query: q.q },
+  });
+}));
+
 /* GET /messages/by-uid — find message by account+folder+uid and return full body */
 const ByUidQuery = z.object({ accountId: z.string().min(1).max(26), folder: z.string().min(1), uid: z.coerce.number().int() });
 mailRouter.get('/messages/by-uid', validate({ query: ByUidQuery }), asyncHandler(async (req, res) => {

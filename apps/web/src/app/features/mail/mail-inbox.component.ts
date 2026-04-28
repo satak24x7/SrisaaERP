@@ -37,6 +37,13 @@ interface MessageRow {
           @if (accounts().length > 0) {
             <p-select [(ngModel)]="selectedAccountId" [options]="accounts()" optionLabel="label" optionValue="id" (onChange)="onAccountChange()" class="w-56" />
           }
+          <div class="flex items-center gap-2 border border-gray-500 rounded-lg px-3 py-2 bg-gray-800">
+            <i class="pi pi-search text-gray-400"></i>
+            <input [(ngModel)]="searchQuery" placeholder="Search emails..." class="bg-transparent border-0 outline-none text-white placeholder-gray-400 w-56 text-sm" (keyup.enter)="doSearch()" />
+            @if (searchQuery) {
+              <i class="pi pi-times text-gray-400 hover:text-white cursor-pointer text-sm" (click)="clearSearch()"></i>
+            }
+          </div>
           <p-button label="Compose" icon="pi pi-pencil" (onClick)="openCompose()" />
           @if (selectedUids.length > 0) {
             <p-button label="Delete ({{ selectedUids.length }})" icon="pi pi-trash" severity="danger" [outlined]="true" (onClick)="bulkDelete()" />
@@ -162,6 +169,8 @@ export class MailInboxComponent implements OnInit {
   totalMessages = 0;
   selectedUids: number[] = [];
   selectAll = false;
+  searchQuery = '';
+  isSearching = false;
   private initialLoadDone = false;
 
   // Map uid → db id for navigation
@@ -243,6 +252,25 @@ export class MailInboxComponent implements OnInit {
     this.router.navigate(['/mail/message', this.selectedAccountId], {
       queryParams: { folder: this.selectedFolder, uid: m.uid },
     });
+  }
+
+  doSearch(): void {
+    if (!this.searchQuery.trim() || !this.selectedAccountId) return;
+    this.isSearching = true;
+    this.loadingMessages.set(true);
+    this.selectedUids = [];
+    this.selectAll = false;
+    const params = `folder=${encodeURIComponent(this.selectedFolder)}&q=${encodeURIComponent(this.searchQuery.trim())}&limit=50`;
+    this.http.get<{ data: MessageRow[]; meta: { total: number } }>(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/search?${params}`).subscribe({
+      next: (r) => { this.messages.set(r.data); this.totalMessages = r.meta.total; this.loadingMessages.set(false); },
+      error: () => { this.loadingMessages.set(false); this.msg.add({ severity: 'error', summary: 'Search failed' }); },
+    });
+  }
+
+  clearSearch(): void {
+    this.searchQuery = '';
+    this.isSearching = false;
+    this.loadMessages();
   }
 
   isSelected(uid: number): boolean { return this.selectedUids.includes(uid); }

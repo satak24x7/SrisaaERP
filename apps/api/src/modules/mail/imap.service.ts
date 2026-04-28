@@ -236,6 +236,75 @@ export async function streamAttachment(
   };
 }
 
+export async function searchMessages(
+  account: MailAccountRow,
+  folder: string,
+  query: string,
+  limit: number = 50,
+): Promise<{ messages: EnvelopeMessage[]; total: number }> {
+  const client = createClient(account);
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock(folder);
+    try {
+      // IMAP OR search across subject, from, to, cc, body
+      const searchCriteria = {
+        or: [
+          { subject: query },
+          { from: query },
+          { to: query },
+          { cc: query },
+          { body: query },
+        ],
+      };
+
+      const uids = await client.search(searchCriteria, { uid: true });
+      const total = uids.length;
+
+      if (total === 0) {
+        return { messages: [], total: 0 };
+      }
+
+      // Take only the most recent N results
+      const recentUids = uids.slice(-limit).reverse();
+      const uidRange = recentUids.join(',');
+
+      const messages: EnvelopeMessage[] = [];
+      for await (const msg of client.fetch(uidRange, {
+        envelope: true,
+        flags: true,
+        bodyStructure: true,
+        uid: true,
+      })) {
+        const env = msg.envelope;
+        const from = env.from?.[0];
+        messages.push({
+          uid: msg.uid,
+          messageId: env.messageId ?? null,
+          inReplyTo: env.inReplyTo ?? null,
+          fromAddress: from?.address ?? '',
+          fromName: from?.name ?? null,
+          toAddresses: (env.to ?? []).map((a: { address?: string; name?: string }) => ({ address: a.address ?? '', name: a.name ?? null })),
+          ccAddresses: (env.cc ?? []).map((a: { address?: string; name?: string }) => ({ address: a.address ?? '', name: a.name ?? null })),
+          subject: env.subject ?? null,
+          sentAt: env.date ?? new Date(),
+          isRead: msg.flags?.has('\\Seen') ?? false,
+          isFlagged: msg.flags?.has('\\Flagged') ?? false,
+          hasAttachments: hasAttachmentParts(msg.bodyStructure),
+          size: msg.size ?? 0,
+        });
+      }
+
+      messages.sort((a, b) => b.sentAt.getTime() - a.sentAt.getTime());
+      return { messages, total };
+    } finally {
+      lock.release();
+    }
+  } finally {
+    try { await client.logout(); } catch { /* ignore */ }
+  }
+}
+
 export async function deleteMessages(
   account: MailAccountRow,
   folder: string,
