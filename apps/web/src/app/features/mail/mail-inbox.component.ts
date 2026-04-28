@@ -48,6 +48,9 @@ interface MessageRow {
           @if (selectedUids.length > 0) {
             <p-button label="Delete ({{ selectedUids.length }})" icon="pi pi-trash" severity="danger" [outlined]="true" (onClick)="bulkDelete()" />
           }
+          @if (isTrashOrJunk() && messages().length > 0) {
+            <p-button label="Empty Folder" icon="pi pi-trash" severity="danger" (onClick)="emptyFolder()" />
+          }
           <p-button icon="pi pi-refresh" [outlined]="true" (onClick)="refreshMessages()" [loading]="loadingMessages()" />
           <p-button label="Settings" icon="pi pi-cog" severity="secondary" [outlined]="true" (onClick)="router.navigate(['/mail/settings'])" />
         </div>
@@ -271,6 +274,32 @@ export class MailInboxComponent implements OnInit {
     this.searchQuery = '';
     this.isSearching = false;
     this.loadMessages();
+  }
+
+  isTrashOrJunk(): boolean {
+    const f = this.selectedFolder.toLowerCase();
+    return f.includes('trash') || f.includes('junk') || f.includes('spam') || f.includes('deleted');
+  }
+
+  emptyFolder(): void {
+    this.confirm.confirm({
+      message: `Permanently delete ALL ${this.messages().length} messages in ${this.selectedFolder}?`,
+      header: 'Empty Folder',
+      accept: () => {
+        const allUids = this.messages().map((m) => m.uid);
+        this.http.post(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/delete-messages`, {
+          folder: this.selectedFolder, uids: allUids,
+        }).subscribe({
+          next: () => {
+            this.msg.add({ severity: 'success', summary: 'Emptied', detail: `${allUids.length} messages deleted` });
+            this.selectedUids = [];
+            this.selectAll = false;
+            this.loadMessages();
+          },
+          error: () => { this.msg.add({ severity: 'error', summary: 'Failed to empty folder' }); },
+        });
+      },
+    });
   }
 
   isSelected(uid: number): boolean { return this.selectedUids.includes(uid); }
