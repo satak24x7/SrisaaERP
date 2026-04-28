@@ -93,14 +93,15 @@ export async function fetchFolders(account: MailAccountRow): Promise<FolderInfo[
     }
     walk(tree);
 
-    // Get message counts for each folder
-    for (const f of folders) {
-      try {
-        const status = await client.status(f.path, { messages: true, unseen: true });
-        f.messagesCount = status.messages ?? 0;
-        f.unseenCount = status.unseen ?? 0;
-      } catch { /* skip folders that can't be statused */ }
-    }
+    // Only get INBOX status (fast) — skip other folders to avoid 10s+ delay
+    try {
+      const inboxStatus = await client.status('INBOX', { messages: true, unseen: true });
+      const inbox = folders.find((f) => f.path === 'INBOX');
+      if (inbox) {
+        inbox.messagesCount = inboxStatus.messages ?? 0;
+        inbox.unseenCount = inboxStatus.unseen ?? 0;
+      }
+    } catch { /* non-critical */ }
 
     await client.logout();
     return folders;

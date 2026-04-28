@@ -34,7 +34,7 @@ interface MessageRow {
           @if (accounts().length > 0) {
             <p-select [(ngModel)]="selectedAccountId" [options]="accounts()" optionLabel="label" optionValue="id" (onChange)="onAccountChange()" class="w-56" />
           }
-          <p-button icon="pi pi-refresh" [outlined]="true" (onClick)="loadMessages()" [loading]="loadingMessages()" />
+          <p-button icon="pi pi-refresh" [outlined]="true" (onClick)="refreshMessages()" [loading]="loadingMessages()" />
           <p-button label="Settings" icon="pi pi-cog" severity="secondary" [outlined]="true" (onClick)="router.navigate(['/mail/settings'])" />
         </div>
       </div>
@@ -145,6 +145,7 @@ export class MailInboxComponent implements OnInit {
   currentPage = 1;
   pageSize = 50;
   totalMessages = 0;
+  private initialLoadDone = false;
 
   // Map uid → db id for navigation
   private uidToDbId = new Map<number, string>();
@@ -173,17 +174,30 @@ export class MailInboxComponent implements OnInit {
 
   loadFolders(): void {
     if (!this.selectedAccountId) return;
-    this.loadingFolders.set(true);
+    // Show default folders immediately, then refresh from IMAP in background
+    if (this.folders().length === 0) {
+      this.folders.set([
+        { path: 'INBOX', name: 'Inbox', messagesCount: 0, unseenCount: 0, specialUse: '\\Inbox' },
+        { path: 'Sent', name: 'Sent', messagesCount: 0, unseenCount: 0, specialUse: '\\Sent' },
+        { path: 'Drafts', name: 'Drafts', messagesCount: 0, unseenCount: 0, specialUse: '\\Drafts' },
+        { path: 'Trash', name: 'Trash', messagesCount: 0, unseenCount: 0, specialUse: '\\Trash' },
+      ]);
+    }
     this.http.get<{ data: FolderInfo[] }>(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/folders`).subscribe({
-      next: (r) => { this.folders.set(r.data); this.loadingFolders.set(false); },
-      error: () => { this.loadingFolders.set(false); this.msg.add({ severity: 'error', summary: 'Failed to load folders' }); },
+      next: (r) => { this.folders.set(r.data); },
+      error: () => {},
     });
   }
 
-  loadMessages(): void {
+  refreshMessages(): void {
+    this.loadMessages(true);
+  }
+
+  loadMessages(refresh = false): void {
     if (!this.selectedAccountId) return;
     this.loadingMessages.set(true);
-    const params = `folder=${encodeURIComponent(this.selectedFolder)}&page=${this.currentPage}&limit=${this.pageSize}`;
+    let params = `folder=${encodeURIComponent(this.selectedFolder)}&page=${this.currentPage}&limit=${this.pageSize}`;
+    if (refresh) params += '&refresh=true';
     this.http.get<{ data: MessageRow[]; meta: { total: number } }>(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/messages?${params}`).subscribe({
       next: (r) => {
         this.messages.set(r.data);

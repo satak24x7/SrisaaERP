@@ -57,6 +57,7 @@ const ListMessagesQuery = z.object({
   folder: z.string().default('INBOX'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  refresh: z.string().optional(), // "true" to force IMAP fetch; otherwise serve from DB cache
 });
 
 // --- Helpers ---
@@ -172,6 +173,31 @@ mailRouter.get('/accounts/:id/messages', validate({ params: IdParams, query: Lis
   if (!account) throw errors.notFound('Mail account not found');
 
   const q = req.query as unknown as z.infer<typeof ListMessagesQuery>;
+
+  // Check if we have cached messages for this folder
+  const cachedCount = await prisma.mailMessage.count({ where: { mailAccountId: account.id, folder: q.folder } });
+
+  if (cachedCount > 0 && q.refresh !== 'true') {
+    // Serve from DB cache (instant)
+    const skip = (q.page - 1) * q.limit;
+    const cached = await prisma.mailMessage.findMany({
+      where: { mailAccountId: account.id, folder: q.folder },
+      orderBy: { sentAt: 'desc' },
+      skip, take: q.limit,
+    });
+    res.json({
+      data: cached.map((m) => ({
+        uid: m.uid, messageId: m.messageId, fromAddress: m.fromAddress, fromName: m.fromName,
+        toAddresses: m.toAddresses, subject: m.subject,
+        sentAt: m.sentAt.toISOString(), isRead: m.isRead, isFlagged: m.isFlagged,
+        hasAttachments: m.hasAttachments,
+      })),
+      meta: { total: cachedCount, page: q.page, limit: q.limit, folder: q.folder },
+    });
+    return;
+  }
+
+  // Fetch from IMAP (first load or explicit refresh)
   const result = await imapService.fetchMessageList(
     account as unknown as Parameters<typeof imapService.fetchMessageList>[0],
     q.folder, q.page, q.limit,
