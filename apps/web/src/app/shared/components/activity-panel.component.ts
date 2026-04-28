@@ -1,4 +1,5 @@
 import { Component, OnInit, Input, inject, signal } from '@angular/core';
+import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormsModule, FormBuilder, Validators } from '@angular/forms';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
@@ -82,7 +83,7 @@ const TASK_STATUSES = [
           <tr>
             <td><i [class]="typeIcon(a.activityType)" class="text-gray-500"></i></td>
             <td class="font-medium">{{ a.subject }}</td>
-            <td><p-tag [value]="a.activityType" [severity]="a.activityType === 'EVENT' ? 'info' : 'warn'" [style]="{'font-size':'0.7rem'}" /></td>
+            <td><p-tag [value]="a.activityType" [severity]="typeSeverity(a.activityType)" [style]="{'font-size':'0.7rem'}" /></td>
             <td class="text-sm">{{ a.categoryCode }}</td>
             <td class="text-sm">
               @if (a.activityType === 'EVENT') {
@@ -101,10 +102,12 @@ const TASK_STATUSES = [
             </td>
             <td class="text-sm">{{ a.userName || '-' }}</td>
             <td>
-              <div class="flex gap-1">
-                <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openDialog(a)" />
-                <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteActivity(a.id)" />
-              </div>
+              @if (a.activityType !== 'EMAIL') {
+                <div class="flex gap-1">
+                  <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openDialog(a)" />
+                  <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteActivity(a.id)" />
+                </div>
+              }
             </td>
           </tr>
         </ng-template>
@@ -112,6 +115,7 @@ const TASK_STATUSES = [
           <tr><td colspan="8" class="text-center text-gray-400 py-4">No activities linked to this {{ entityTypeLabel }}</td></tr>
         </ng-template>
       </p-table>
+
     </div>
 
     <!-- Add / Edit Dialog -->
@@ -197,6 +201,8 @@ export class ActivityPanelComponent implements OnInit {
   private readonly confirm = inject(ConfirmationService);
 
   activities = signal<Activity[]>([]);
+  linkedEmails = signal<Array<{ id: string; message: { id: string; fromAddress: string; fromName: string | null; subject: string | null; sentAt: string; folder: string } }>>([]);
+  private readonly router = inject(Router);
   userOptions = signal<Ref[]>([]);
   contactOptions = signal<Ref[]>([]);
   categoryOptions = signal<LookupItem[]>([]);
@@ -208,7 +214,7 @@ export class ActivityPanelComponent implements OnInit {
     { label: 'All', value: '' },
     { label: 'Open', value: 'open' },
     { label: 'Upcoming', value: 'upcoming' },
-    { label: 'Completed', value: 'completed' },
+    { label: 'History', value: 'completed' },
   ];
   activeTab = '';
 
@@ -237,6 +243,7 @@ export class ActivityPanelComponent implements OnInit {
   ngOnInit(): void {
     this.loadOptions();
     this.loadActivities();
+    this.loadLinkedEmails();
   }
 
   private loadOptions(): void {
@@ -257,7 +264,26 @@ export class ActivityPanelComponent implements OnInit {
     if (this.activeTab) params.push(`tab=${this.activeTab}`);
 
     this.http.get<{ data: Activity[] }>(`${environment.apiBaseUrl}/activities?${params.join('&')}`).subscribe({
-      next: (r) => this.activities.set(r.data),
+      next: (r) => {
+        // Merge linked emails as pseudo-activities
+        const emailActivities: Activity[] = this.linkedEmails().map((e) => ({
+          id: `email_${e.id}`,
+          activityType: 'EMAIL',
+          subject: e.message.subject || '(no subject)',
+          description: `From: ${e.message.fromName || e.message.fromAddress}`,
+          categoryCode: 'email',
+          userId: '', userName: e.message.fromName || e.message.fromAddress,
+          startDateTime: e.message.sentAt, endDateTime: null, isAllDay: false,
+          dueDateTime: null, taskStatus: null,
+          associations: [], contacts: [],
+          createdAt: e.message.sentAt, updatedAt: e.message.sentAt,
+        }));
+
+        // Merge and sort by date descending
+        const all = [...r.data, ...emailActivities];
+        all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        this.activities.set(all);
+      },
       error: () => {},
     });
   }
@@ -340,8 +366,30 @@ export class ActivityPanelComponent implements OnInit {
     });
   }
 
+  private loadLinkedEmails(): void {
+    this.http.get<{ data: Array<{ id: string; message: { id: string; fromAddress: string; fromName: string | null; subject: string | null; sentAt: string; folder: string } }> }>(
+      `${environment.apiBaseUrl}/mail/entity-links?entityType=${this.entityType}&entityId=${this.entityId}`,
+    ).subscribe({
+      next: (r) => this.linkedEmails.set(r.data),
+      error: () => {},
+    });
+  }
+
+  openEmail(email: { message: { id: string; folder: string } }): void {
+    // Navigate to mail reader — need account ID. For now, use the message ID directly.
+    this.router.navigate(['/mail/message', email.message.id], {
+      queryParams: { folder: email.message.folder, uid: 0 },
+    });
+  }
+
   typeIcon(type: string): string {
+    if (type === 'EMAIL') return 'pi pi-envelope';
     return type === 'EVENT' ? 'pi pi-calendar' : 'pi pi-check-square';
+  }
+
+  typeSeverity(type: string): 'info' | 'warn' | 'success' | 'secondary' {
+    if (type === 'EMAIL') return 'secondary';
+    return type === 'EVENT' ? 'info' : 'warn';
   }
 
   taskStatusSeverity(s: string): 'success' | 'warn' | 'danger' | 'info' {

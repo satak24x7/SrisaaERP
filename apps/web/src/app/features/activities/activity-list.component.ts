@@ -264,7 +264,7 @@ export class ActivityListComponent implements OnInit {
     { label: 'Current', value: 'current' },
     { label: 'Upcoming', value: 'upcoming' },
     { label: 'Planned', value: 'planned' },
-    { label: 'Completed', value: 'completed' },
+    { label: 'History', value: 'completed' },
     { label: 'All', value: '' },
   ];
   showMine = true;
