@@ -139,7 +139,7 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 
 ## R9 — Integrations
 
-## Platform Features (cross-cutting, shipped 2026-04-19/20)
+## Platform Features (cross-cutting)
 
 | Component | Status | Notes |
 |---|---|---|
@@ -149,6 +149,14 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 | Keycloak user auto-sync | 🟢 | User create/update/delete → auto-sync to Keycloak (account, name, email, roles). Email as username. |
 | Gemini AI config | 🟢 | API key + model configurable via System → Configuration (app_config table). |
 | Mobile auth (direct login) | 🟢 | Username/password login (no OIDC redirect). Token refresh. |
+| Travel proof attachments | 🟢 | File upload on Tickets, Hotels, and Expenses. Download via authenticated blob. 10MB limit. |
+| Finance — Travel Expenses | 🟢 | Advance disbursement + reimbursement payment recording. Sidebar: Finance > Travel Expenses. |
+| Travel → Cost of Sale sync | 🟢 | On submit-expenses, per-object cost share auto-creates/updates CostOfSaleEntry (TRAVEL) on linked Opportunities. |
+| Expense Sheets (MVP) | 🟢 | Work Area > Expenses. CRUD with line items, file attachments, status workflow (Draft→Submitted→Approved→Paid), summary totals. |
+| Auth interceptor hardening | 🟢 | Redirects to Keycloak login when token missing; auto-re-auth on 401. |
+| Activity tabs revamp | 🟢 | Current (today+past open) / Upcoming (tomorrow+day after) / Planned (future) / Completed / All. Default: Current. |
+| Opportunity list filters | 🟢 | Open/Closed/All toggle (default: Open), BU filter, Account filter. Default stage: lowercase 'capture'. |
+| Close & Add New (Activities) | 🟢 | Edit task → set Closed → "Close & Add New" button closes task and opens pre-filled create form (category, assignee, contacts, linked objects). |
 
 ## R10 — Remaining Organization Masters & Platform Hardening
 

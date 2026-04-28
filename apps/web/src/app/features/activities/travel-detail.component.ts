@@ -22,9 +22,9 @@ import { environment } from '../../../environments/environment';
 interface Ref { id: string; name: string; }
 interface LookupItem { label: string; value: string; isActive?: boolean; }
 interface Association { id: string; entityType: string; entityId: string; entityName: string | null; }
-interface TicketRow { id: string; ticketType: string; fromLocation: string; toLocation: string; travelDate: string; returnDate: string | null; bookingRef: string | null; amountPaise: number; notes: string | null; }
-interface HotelRow { id: string; hotelName: string; location: string; checkIn: string; checkOut: string; bookingRef: string | null; amountPaise: number; notes: string | null; }
-interface ExpenseRow { id: string; category: string; expenseDate: string; description: string; amountPaise: number; receiptRef: string | null; }
+interface TicketRow { id: string; ticketType: string; fromLocation: string; toLocation: string; travelDate: string; returnDate: string | null; bookingRef: string | null; amountPaise: number; notes: string | null; attachmentName: string | null; attachmentPath: string | null; }
+interface HotelRow { id: string; hotelName: string; location: string; checkIn: string; checkOut: string; bookingRef: string | null; amountPaise: number; notes: string | null; attachmentName: string | null; attachmentPath: string | null; }
+interface ExpenseRow { id: string; category: string; expenseDate: string; description: string; amountPaise: number; receiptRef: string | null; attachmentName: string | null; attachmentPath: string | null; }
 interface TravelPlanSummary { ticketsTotal: number; hotelsTotal: number; expensesTotal: number; costOfTravel: number; advanceAmountPaise: number; reimbursementDue: number; reimbursementPaid: number; reimbursementBalance: number; perObjectShare: number; travellersCount: number; }
 interface TravelPlan {
   id: string; title: string; purpose: string; status: string;
@@ -225,7 +225,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
 
       <!-- Tabs: only in edit mode -->
       @if (!isCreateMode && plan()) {
-        <p-tabs [value]="0">
+        <p-tabs [(value)]="activeTabIndex">
           <p-tablist>
             <p-tab [value]="0">Tickets</p-tab>
             <p-tab [value]="1">Hotels</p-tab>
@@ -243,7 +243,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                 <p-table [value]="plan()!.tickets" styleClass="p-datatable-sm">
                   <ng-template pTemplate="header">
                     <tr>
-                      <th>Type</th><th>From</th><th>To</th><th>Date</th><th>Return</th><th>Booking Ref</th><th class="text-right">Amount (₹)</th><th style="width:100px">Actions</th>
+                      <th>Type</th><th>From</th><th>To</th><th>Date</th><th>Return</th><th>Booking Ref</th><th class="text-right">Amount (₹)</th><th>Proof</th><th style="width:100px">Actions</th>
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="body" let-t>
@@ -256,6 +256,15 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                       <td>{{ t.bookingRef || '-' }}</td>
                       <td class="text-right font-medium">{{ formatRupees(t.amountPaise) }}</td>
                       <td>
+                        @if (t.attachmentName) {
+                          <a class="text-blue-600 hover:underline cursor-pointer text-sm flex items-center gap-1" (click)="downloadTicketAttachment(t)">
+                            <i class="pi pi-paperclip"></i> {{ t.attachmentName }}
+                          </a>
+                        } @else {
+                          <span class="text-gray-400">-</span>
+                        }
+                      </td>
+                      <td>
                         <div class="flex gap-1">
                           <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openTicketDialog(t)" />
                           <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteTicket(t.id)" />
@@ -264,7 +273,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="emptymessage">
-                    <tr><td colspan="8" class="text-center text-gray-400 py-4">No tickets yet</td></tr>
+                    <tr><td colspan="9" class="text-center text-gray-400 py-4">No tickets yet</td></tr>
                   </ng-template>
                 </p-table>
               </div>
@@ -280,7 +289,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                 <p-table [value]="plan()!.hotels" styleClass="p-datatable-sm">
                   <ng-template pTemplate="header">
                     <tr>
-                      <th>Hotel Name</th><th>Location</th><th>Check-in</th><th>Check-out</th><th>Booking Ref</th><th class="text-right">Amount (₹)</th><th style="width:100px">Actions</th>
+                      <th>Hotel Name</th><th>Location</th><th>Check-in</th><th>Check-out</th><th>Booking Ref</th><th class="text-right">Amount (₹)</th><th>Proof</th><th style="width:100px">Actions</th>
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="body" let-h>
@@ -292,6 +301,15 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                       <td>{{ h.bookingRef || '-' }}</td>
                       <td class="text-right font-medium">{{ formatRupees(h.amountPaise) }}</td>
                       <td>
+                        @if (h.attachmentName) {
+                          <a class="text-blue-600 hover:underline cursor-pointer text-sm flex items-center gap-1" (click)="downloadHotelAttachment(h)">
+                            <i class="pi pi-paperclip"></i> {{ h.attachmentName }}
+                          </a>
+                        } @else {
+                          <span class="text-gray-400">-</span>
+                        }
+                      </td>
+                      <td>
                         <div class="flex gap-1">
                           <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openHotelDialog(h)" />
                           <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteHotel(h.id)" />
@@ -300,7 +318,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="emptymessage">
-                    <tr><td colspan="7" class="text-center text-gray-400 py-4">No hotels yet</td></tr>
+                    <tr><td colspan="8" class="text-center text-gray-400 py-4">No hotels yet</td></tr>
                   </ng-template>
                 </p-table>
               </div>
@@ -316,7 +334,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                 <p-table [value]="plan()!.expenses" styleClass="p-datatable-sm">
                   <ng-template pTemplate="header">
                     <tr>
-                      <th>Category</th><th>Date</th><th>Description</th><th class="text-right">Amount (₹)</th><th>Receipt Ref</th><th style="width:100px">Actions</th>
+                      <th>Category</th><th>Date</th><th>Description</th><th class="text-right">Amount (₹)</th><th>Receipt Ref</th><th>Proof</th><th style="width:100px">Actions</th>
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="body" let-e>
@@ -327,6 +345,15 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                       <td class="text-right font-medium">{{ formatRupees(e.amountPaise) }}</td>
                       <td>{{ e.receiptRef || '-' }}</td>
                       <td>
+                        @if (e.attachmentName) {
+                          <a class="text-blue-600 hover:underline cursor-pointer text-sm flex items-center gap-1" (click)="downloadExpenseAttachment(e)">
+                            <i class="pi pi-paperclip"></i> {{ e.attachmentName }}
+                          </a>
+                        } @else {
+                          <span class="text-gray-400">-</span>
+                        }
+                      </td>
+                      <td>
                         <div class="flex gap-1">
                           <p-button icon="pi pi-pencil" [text]="true" [rounded]="true" size="small" (onClick)="openExpenseDialog(e)" />
                           <p-button icon="pi pi-trash" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="deleteExpense(e.id)" />
@@ -335,7 +362,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
                     </tr>
                   </ng-template>
                   <ng-template pTemplate="emptymessage">
-                    <tr><td colspan="6" class="text-center text-gray-400 py-4">No expenses yet</td></tr>
+                    <tr><td colspan="7" class="text-center text-gray-400 py-4">No expenses yet</td></tr>
                   </ng-template>
                 </p-table>
               </div>
@@ -481,6 +508,17 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
             <label class="text-sm font-medium text-gray-700">Notes</label>
             <textarea pTextarea formControlName="notes" [rows]="2" class="w-full"></textarea>
           </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">Proof Attachment</label>
+            <input type="file" (change)="onTicketFileSelect($event)" accept="image/*,.pdf,.jpg,.jpeg,.png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            @if (ticketExistingFileName && !ticketSelectedFile) {
+              <div class="flex items-center gap-2 mt-1 text-sm text-gray-600">
+                <i class="pi pi-paperclip"></i>
+                <span>{{ ticketExistingFileName }}</span>
+                <p-button icon="pi pi-times" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="ticketRemoveAttachment = true; ticketExistingFileName = ''" />
+              </div>
+            }
+          </div>
         </form>
         <ng-template pTemplate="footer">
           <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="ticketDialogVisible=false" />
@@ -521,6 +559,17 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
             <label class="text-sm font-medium text-gray-700">Notes</label>
             <textarea pTextarea formControlName="notes" [rows]="2" class="w-full"></textarea>
           </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">Proof Attachment</label>
+            <input type="file" (change)="onHotelFileSelect($event)" accept="image/*,.pdf,.jpg,.jpeg,.png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            @if (hotelExistingFileName && !hotelSelectedFile) {
+              <div class="flex items-center gap-2 mt-1 text-sm text-gray-600">
+                <i class="pi pi-paperclip"></i>
+                <span>{{ hotelExistingFileName }}</span>
+                <p-button icon="pi pi-times" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="hotelRemoveAttachment = true; hotelExistingFileName = ''" />
+              </div>
+            }
+          </div>
         </form>
         <ng-template pTemplate="footer">
           <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="hotelDialogVisible=false" />
@@ -550,6 +599,17 @@ const EXPENSE_CAT_LABELS: Record<string, string> = Object.fromEntries(EXPENSE_CA
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-gray-700">Receipt Ref</label>
             <input pInputText formControlName="receiptRef" class="w-full" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">Proof Attachment</label>
+            <input type="file" (change)="onExpenseFileSelect($event)" accept="image/*,.pdf,.jpg,.jpeg,.png" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            @if (expenseExistingFileName && !expenseSelectedFile) {
+              <div class="flex items-center gap-2 mt-1 text-sm text-gray-600">
+                <i class="pi pi-paperclip"></i>
+                <span>{{ expenseExistingFileName }}</span>
+                <p-button icon="pi pi-times" [text]="true" [rounded]="true" size="small" severity="danger" (onClick)="expenseRemoveAttachment = true; expenseExistingFileName = ''" />
+              </div>
+            }
           </div>
         </form>
         <ng-template pTemplate="footer">
@@ -586,6 +646,7 @@ export class TravelDetailComponent implements OnInit {
   serverError = '';
   isCreateMode = false;
   associationsChanged = false;
+  activeTabIndex = 0;
 
   // Options
   userOptions = signal<Ref[]>([]);
@@ -613,6 +674,15 @@ export class TravelDetailComponent implements OnInit {
   expenseEditId: string | null = null;
   rejectDialogVisible = false;
   rejectReason = '';
+  ticketSelectedFile: File | null = null;
+  ticketExistingFileName = '';
+  ticketRemoveAttachment = false;
+  hotelSelectedFile: File | null = null;
+  hotelExistingFileName = '';
+  hotelRemoveAttachment = false;
+  expenseSelectedFile: File | null = null;
+  expenseExistingFileName = '';
+  expenseRemoveAttachment = false;
 
   form = this.fb.group({
     title: ['', [Validators.required, Validators.maxLength(255)]],
@@ -666,8 +736,8 @@ export class TravelDetailComponent implements OnInit {
     this.loadOptions();
   }
 
-  private loadPlan(id: string): void {
-    this.loading.set(true);
+  private loadPlan(id: string, restoreScroll = false): void {
+    const scrollY = restoreScroll ? window.scrollY : 0;
     this.http.get<{ data: TravelPlan }>(`${environment.apiBaseUrl}/travel-plans/${id}`).subscribe({
       next: (r) => {
         this.plan.set(r.data);
@@ -686,6 +756,9 @@ export class TravelDetailComponent implements OnInit {
         this.form.markAsPristine();
         this.associationsChanged = false;
         this.loading.set(false);
+        if (restoreScroll) {
+          setTimeout(() => window.scrollTo({ top: scrollY }), 0);
+        }
       },
       error: () => { this.plan.set(null); this.loading.set(false); },
     });
@@ -797,6 +870,11 @@ export class TravelDetailComponent implements OnInit {
 
   // ---- Tickets ----
 
+  onTicketFileSelect(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.ticketSelectedFile = input.files?.[0] ?? null;
+  }
+
   openTicketDialog(ticket?: TicketRow): void {
     if (ticket) {
       this.ticketEditId = ticket.id;
@@ -810,41 +888,56 @@ export class TravelDetailComponent implements OnInit {
         amountRupees: ticket.amountPaise / 100,
         notes: ticket.notes ?? '',
       });
+      this.ticketExistingFileName = ticket.attachmentName ?? '';
     } else {
       this.ticketEditId = null;
       this.ticketForm.reset({ ticketType: 'FLIGHT' });
+      this.ticketExistingFileName = '';
     }
+    this.ticketSelectedFile = null;
+    this.ticketRemoveAttachment = false;
     this.ticketDialogVisible = true;
   }
 
   saveTicket(): void {
     if (this.ticketForm.invalid || !this.plan()) return;
     const v = this.ticketForm.value;
-    const body: Record<string, unknown> = {
-      ticketType: v.ticketType,
-      fromLocation: v.fromLocation,
-      toLocation: v.toLocation,
-      travelDate: v.travelDate instanceof Date ? v.travelDate.toISOString().slice(0, 10) : v.travelDate,
-      returnDate: v.returnDate instanceof Date ? v.returnDate.toISOString().slice(0, 10) : v.returnDate || null,
-      bookingRef: v.bookingRef || null,
-      amountPaise: v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0,
-      notes: v.notes || null,
-    };
+
+    const fd = new FormData();
+    fd.append('ticketType', v.ticketType ?? '');
+    fd.append('fromLocation', v.fromLocation ?? '');
+    fd.append('toLocation', v.toLocation ?? '');
+    fd.append('travelDate', v.travelDate instanceof Date ? this.toLocalDateStr(v.travelDate) : (v.travelDate ?? ''));
+    fd.append('returnDate', v.returnDate instanceof Date ? this.toLocalDateStr(v.returnDate) : (v.returnDate ?? ''));
+    fd.append('bookingRef', v.bookingRef ?? '');
+    fd.append('amountPaise', String(v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0));
+    fd.append('notes', v.notes ?? '');
+    if (this.ticketSelectedFile) fd.append('file', this.ticketSelectedFile);
+    if (this.ticketRemoveAttachment) fd.append('removeAttachment', 'true');
 
     const baseUrl = `${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/tickets`;
     const req$ = this.ticketEditId
-      ? this.http.patch(`${baseUrl}/${this.ticketEditId}`, body)
-      : this.http.post(baseUrl, body);
+      ? this.http.patch(`${baseUrl}/${this.ticketEditId}`, fd)
+      : this.http.post(baseUrl, fd);
 
     req$.subscribe({
       next: () => {
         this.ticketDialogVisible = false;
+        this.ticketSelectedFile = null;
         this.msg.add({ severity: 'success', summary: 'Saved', detail: `Ticket ${this.ticketEditId ? 'updated' : 'added'}` });
-        this.loadPlan(this.plan()!.id);
+        this.loadPlan(this.plan()!.id, true);
       },
       error: (err: HttpErrorResponse) => {
         this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed to save ticket' });
       },
+    });
+  }
+
+  downloadTicketAttachment(ticket: TicketRow): void {
+    if (!ticket.attachmentPath || !this.plan()) return;
+    this.http.get(`${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/tickets/${ticket.id}/download`, { responseType: 'blob' }).subscribe({
+      next: (blob) => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = ticket.attachmentName ?? 'attachment'; a.click(); URL.revokeObjectURL(url); },
+      error: () => { this.msg.add({ severity: 'error', summary: 'Error', detail: 'Failed to download attachment' }); },
     });
   }
 
@@ -853,7 +946,7 @@ export class TravelDetailComponent implements OnInit {
       message: 'Delete this ticket?',
       accept: () => {
         this.http.delete(`${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/tickets/${ticketId}`).subscribe({
-          next: () => { this.msg.add({ severity: 'success', summary: 'Deleted', detail: 'Ticket removed' }); this.loadPlan(this.plan()!.id); },
+          next: () => { this.msg.add({ severity: 'success', summary: 'Deleted', detail: 'Ticket removed' }); this.loadPlan(this.plan()!.id, true); },
           error: (err: HttpErrorResponse) => { this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed to delete' }); },
         });
       },
@@ -861,6 +954,11 @@ export class TravelDetailComponent implements OnInit {
   }
 
   // ---- Hotels ----
+
+  onHotelFileSelect(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.hotelSelectedFile = input.files?.[0] ?? null;
+  }
 
   openHotelDialog(hotel?: HotelRow): void {
     if (hotel) {
@@ -874,36 +972,43 @@ export class TravelDetailComponent implements OnInit {
         amountRupees: hotel.amountPaise / 100,
         notes: hotel.notes ?? '',
       });
+      this.hotelExistingFileName = hotel.attachmentName ?? '';
     } else {
       this.hotelEditId = null;
       this.hotelForm.reset();
+      this.hotelExistingFileName = '';
     }
+    this.hotelSelectedFile = null;
+    this.hotelRemoveAttachment = false;
     this.hotelDialogVisible = true;
   }
 
   saveHotel(): void {
     if (this.hotelForm.invalid || !this.plan()) return;
     const v = this.hotelForm.value;
-    const body: Record<string, unknown> = {
-      hotelName: v.hotelName,
-      location: v.location,
-      checkIn: v.checkIn instanceof Date ? v.checkIn.toISOString().slice(0, 10) : v.checkIn,
-      checkOut: v.checkOut instanceof Date ? v.checkOut.toISOString().slice(0, 10) : v.checkOut,
-      bookingRef: v.bookingRef || null,
-      amountPaise: v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0,
-      notes: v.notes || null,
-    };
+
+    const fd = new FormData();
+    fd.append('hotelName', v.hotelName ?? '');
+    fd.append('location', v.location ?? '');
+    fd.append('checkIn', v.checkIn instanceof Date ? this.toLocalDateStr(v.checkIn) : (v.checkIn ?? ''));
+    fd.append('checkOut', v.checkOut instanceof Date ? this.toLocalDateStr(v.checkOut) : (v.checkOut ?? ''));
+    fd.append('bookingRef', v.bookingRef ?? '');
+    fd.append('amountPaise', String(v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0));
+    fd.append('notes', v.notes ?? '');
+    if (this.hotelSelectedFile) fd.append('file', this.hotelSelectedFile);
+    if (this.hotelRemoveAttachment) fd.append('removeAttachment', 'true');
 
     const baseUrl = `${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/hotels`;
     const req$ = this.hotelEditId
-      ? this.http.patch(`${baseUrl}/${this.hotelEditId}`, body)
-      : this.http.post(baseUrl, body);
+      ? this.http.patch(`${baseUrl}/${this.hotelEditId}`, fd)
+      : this.http.post(baseUrl, fd);
 
     req$.subscribe({
       next: () => {
         this.hotelDialogVisible = false;
+        this.hotelSelectedFile = null;
         this.msg.add({ severity: 'success', summary: 'Saved', detail: `Hotel ${this.hotelEditId ? 'updated' : 'added'}` });
-        this.loadPlan(this.plan()!.id);
+        this.loadPlan(this.plan()!.id, true);
       },
       error: (err: HttpErrorResponse) => {
         this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed to save hotel' });
@@ -916,10 +1021,18 @@ export class TravelDetailComponent implements OnInit {
       message: 'Delete this hotel?',
       accept: () => {
         this.http.delete(`${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/hotels/${hotelId}`).subscribe({
-          next: () => { this.msg.add({ severity: 'success', summary: 'Deleted', detail: 'Hotel removed' }); this.loadPlan(this.plan()!.id); },
+          next: () => { this.msg.add({ severity: 'success', summary: 'Deleted', detail: 'Hotel removed' }); this.loadPlan(this.plan()!.id, true); },
           error: (err: HttpErrorResponse) => { this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed to delete' }); },
         });
       },
+    });
+  }
+
+  downloadHotelAttachment(hotel: HotelRow): void {
+    if (!hotel.attachmentPath || !this.plan()) return;
+    this.http.get(`${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/hotels/${hotel.id}/download`, { responseType: 'blob' }).subscribe({
+      next: (blob) => { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = hotel.attachmentName ?? 'attachment'; a.click(); URL.revokeObjectURL(url); },
+      error: () => { this.msg.add({ severity: 'error', summary: 'Error', detail: 'Failed to download attachment' }); },
     });
   }
 
@@ -935,37 +1048,73 @@ export class TravelDetailComponent implements OnInit {
         amountRupees: expense.amountPaise / 100,
         receiptRef: expense.receiptRef ?? '',
       });
+      this.expenseExistingFileName = expense.attachmentName ?? '';
     } else {
       this.expenseEditId = null;
       this.expenseForm.reset();
+      this.expenseExistingFileName = '';
     }
+    this.expenseSelectedFile = null;
+    this.expenseRemoveAttachment = false;
     this.expenseDialogVisible = true;
+  }
+
+  onExpenseFileSelect(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    this.expenseSelectedFile = input.files?.[0] ?? null;
   }
 
   saveExpense(): void {
     if (this.expenseForm.invalid || !this.plan()) return;
     const v = this.expenseForm.value;
-    const body: Record<string, unknown> = {
-      category: v.category,
-      expenseDate: v.expenseDate instanceof Date ? v.expenseDate.toISOString().slice(0, 10) : v.expenseDate,
-      description: v.description,
-      amountPaise: v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0,
-      receiptRef: v.receiptRef || null,
-    };
+
+    const fd = new FormData();
+    fd.append('category', v.category ?? '');
+    fd.append('expenseDate', v.expenseDate instanceof Date ? this.toLocalDateStr(v.expenseDate) : (v.expenseDate ?? ''));
+    fd.append('description', v.description ?? '');
+    fd.append('amountPaise', String(v.amountRupees != null ? Math.round(v.amountRupees * 100) : 0));
+    fd.append('receiptRef', v.receiptRef ?? '');
+    if (this.expenseSelectedFile) {
+      fd.append('file', this.expenseSelectedFile);
+    }
+    if (this.expenseRemoveAttachment) {
+      fd.append('removeAttachment', 'true');
+    }
 
     const baseUrl = `${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/expenses`;
     const req$ = this.expenseEditId
-      ? this.http.patch(`${baseUrl}/${this.expenseEditId}`, body)
-      : this.http.post(baseUrl, body);
+      ? this.http.patch(`${baseUrl}/${this.expenseEditId}`, fd)
+      : this.http.post(baseUrl, fd);
 
     req$.subscribe({
       next: () => {
         this.expenseDialogVisible = false;
+        this.expenseSelectedFile = null;
         this.msg.add({ severity: 'success', summary: 'Saved', detail: `Expense ${this.expenseEditId ? 'updated' : 'added'}` });
-        this.loadPlan(this.plan()!.id);
+        this.loadPlan(this.plan()!.id, true);
       },
       error: (err: HttpErrorResponse) => {
         this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed to save expense' });
+      },
+    });
+  }
+
+  downloadExpenseAttachment(expense: ExpenseRow): void {
+    if (!expense.attachmentPath || !this.plan()) return;
+    this.http.get(
+      `${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/expenses/${expense.id}/download`,
+      { responseType: 'blob' },
+    ).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = expense.attachmentName ?? 'attachment';
+        a.click();
+        URL.revokeObjectURL(url);
+      },
+      error: () => {
+        this.msg.add({ severity: 'error', summary: 'Error', detail: 'Failed to download attachment' });
       },
     });
   }
@@ -975,7 +1124,7 @@ export class TravelDetailComponent implements OnInit {
       message: 'Delete this expense?',
       accept: () => {
         this.http.delete(`${environment.apiBaseUrl}/travel-plans/${this.plan()!.id}/expenses/${expenseId}`).subscribe({
-          next: () => { this.msg.add({ severity: 'success', summary: 'Deleted', detail: 'Expense removed' }); this.loadPlan(this.plan()!.id); },
+          next: () => { this.msg.add({ severity: 'success', summary: 'Deleted', detail: 'Expense removed' }); this.loadPlan(this.plan()!.id, true); },
           error: (err: HttpErrorResponse) => { this.msg.add({ severity: 'error', summary: 'Error', detail: err.error?.error?.message ?? 'Failed to delete' }); },
         });
       },

@@ -33,10 +33,32 @@ interface SelectOption { id: string; name: string; }
     <div class="flex items-center justify-between mb-6">
       <div>
         <h2 class="text-2xl font-semibold text-gray-800">Opportunities</h2>
-        <p class="text-sm text-gray-500 mt-1">Active sales opportunities across all stages</p>
+        <p class="text-sm text-gray-500 mt-1">Sales opportunities across all stages</p>
       </div>
       <p-button label="Create Opportunity" icon="pi pi-plus" (onClick)="openCreate()" />
     </div>
+
+    <!-- Filters -->
+    <div class="flex gap-3 mb-4 flex-wrap items-end">
+      <div class="flex flex-col gap-1">
+        <label class="text-xs text-gray-500">Status</label>
+        <p-select [(ngModel)]="filterOpenStatus" [options]="openStatusOptions" optionLabel="label" optionValue="value" (onChange)="load()" class="w-36" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs text-gray-500">Business Unit</label>
+        <p-select [(ngModel)]="filterBuId" [options]="buOptions()" optionLabel="name" optionValue="id" [filter]="true" [showClear]="true" placeholder="All BUs" (onChange)="load()" class="w-48" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs text-gray-500">Account</label>
+        <p-select [(ngModel)]="filterAccountId" [options]="accountOptions()" optionLabel="name" optionValue="id" [filter]="true" [showClear]="true" placeholder="All Accounts" (onChange)="load()" class="w-48" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <label class="text-xs text-gray-500">Search</label>
+        <input pInputText [(ngModel)]="filterQ" placeholder="Title..." class="w-48" (keyup.enter)="load()" />
+      </div>
+      <p-button icon="pi pi-search" [outlined]="true" (onClick)="load()" />
+    </div>
+
     @if (loading()) {
       <div class="flex items-center gap-2 text-gray-500 py-12 justify-center"><i class="pi pi-spin pi-spinner text-2xl"></i> Loading...</div>
     } @else {
@@ -50,6 +72,9 @@ interface SelectOption { id: string; name: string; }
               <th class="font-semibold">BU</th>
               <th class="font-semibold">Value</th>
               <th class="font-semibold">Stage</th>
+              @if (filterOpenStatus !== 'open') {
+                <th class="font-semibold">Closed</th>
+              }
               <th class="font-semibold">Influencers</th>
               <th class="font-semibold" style="width:100px">Actions</th>
             </tr>
@@ -62,6 +87,15 @@ interface SelectOption { id: string; name: string; }
               <td><span class="text-sm">{{ o.businessUnitName || '—' }}</span></td>
               <td><span class="text-sm">{{ o.contractValuePaise ? '₹' + (o.contractValuePaise / 100 | number:'1.0-0') : '—' }}</span></td>
               <td><p-tag [value]="formatStage(o.stage)" [severity]="stageSeverity(o.stage)" [style]="{'font-size':'0.7rem'}" /></td>
+              @if (filterOpenStatus !== 'open') {
+                <td>
+                  @if (o.closedStatus) {
+                    <p-tag [value]="o.closedStatus" [severity]="closedSeverity(o.closedStatus)" [style]="{'font-size':'0.7rem'}" />
+                  } @else {
+                    <span class="text-gray-400">—</span>
+                  }
+                </td>
+              }
               <td>
                 <div class="flex flex-wrap gap-1">
                   @for (inf of o.influencers; track inf.id) {
@@ -75,7 +109,7 @@ interface SelectOption { id: string; name: string; }
             </tr>
           </ng-template>
           <ng-template pTemplate="emptymessage">
-            <tr><td colspan="8" class="text-center py-8 text-gray-500">No opportunities yet. Create one or convert a Lead.</td></tr>
+            <tr><td [attr.colspan]="filterOpenStatus !== 'open' ? 9 : 8" class="text-center py-8 text-gray-500">No opportunities found.</td></tr>
           </ng-template>
         </p-table>
       </div>
@@ -133,6 +167,18 @@ export class OpportunityListComponent implements OnInit {
   saving = false;
   serverError = '';
 
+  // Filters
+  filterOpenStatus = 'open';
+  filterBuId = '';
+  filterAccountId = '';
+  filterQ = '';
+
+  openStatusOptions = [
+    { label: 'Open', value: 'open' },
+    { label: 'Closed', value: 'closed' },
+    { label: 'All', value: 'all' },
+  ];
+
   entryPathOptions = signal<Array<{ label: string; value: string }>>([]);
 
   form = this.fb.group({
@@ -155,7 +201,12 @@ export class OpportunityListComponent implements OnInit {
 
   load(): void {
     this.loading.set(true);
-    this.http.get<{ data: Opportunity[] }>(`${environment.apiBaseUrl}/opportunities?limit=200`).subscribe({
+    const params: string[] = ['limit=200'];
+    params.push(`openStatus=${this.filterOpenStatus}`);
+    if (this.filterBuId) params.push(`buId=${this.filterBuId}`);
+    if (this.filterAccountId) params.push(`accountId=${this.filterAccountId}`);
+    if (this.filterQ) params.push(`q=${encodeURIComponent(this.filterQ)}`);
+    this.http.get<{ data: Opportunity[] }>(`${environment.apiBaseUrl}/opportunities?${params.join('&')}`).subscribe({
       next: (r) => { this.opportunities.set(r.data); this.loading.set(false); },
       error: () => { this.loading.set(false); },
     });
@@ -170,9 +221,15 @@ export class OpportunityListComponent implements OnInit {
   }
 
   formatStage(s: string): string { return s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
-  formatPath(p: string): string { return p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); }
   stageSeverity(s: string): 'info' | 'success' | 'warn' | 'danger' {
-    switch (s) { case 'AWARDED': return 'success'; case 'LOST': return 'danger'; case 'BID_SUBMISSION': case 'BID_EVALUATION': return 'warn'; default: return 'info'; }
+    const lower = s.toLowerCase();
+    if (lower === 'awarded' || lower === 'closed') return 'success';
+    if (lower === 'lost') return 'danger';
+    if (lower.includes('bid') || lower.includes('eval')) return 'warn';
+    return 'info';
+  }
+  closedSeverity(s: string): 'success' | 'info' | 'warn' | 'danger' {
+    switch (s) { case 'WON': return 'success'; case 'LOST': return 'danger'; case 'CANCELLED': return 'danger'; case 'ON_HOLD': return 'warn'; default: return 'info'; }
   }
 
   openDetail(o: Opportunity): void { this.ngRouter.navigate(['/sales/opportunities', o.id]); }
@@ -184,7 +241,7 @@ export class OpportunityListComponent implements OnInit {
     this.saving = true; this.serverError = '';
     const v = this.form.value;
     const body: Record<string, unknown> = {
-      title: v.title, businessUnitId: v.businessUnitId, entryPath: v.entryPath, stage: 'CAPTURE',
+      title: v.title, businessUnitId: v.businessUnitId, entryPath: v.entryPath,
     };
     if (v.accountId) body['accountId'] = v.accountId;
     if (v.endClientAccountId) body['endClientAccountId'] = v.endClientAccountId;

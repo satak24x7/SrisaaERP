@@ -4,6 +4,30 @@ All notable changes to the GovProjects Platform. Based on [Keep a Changelog](htt
 
 ## [Unreleased]
 
+### Added (2026-04-28 — Session 8: Expense Sheets, Finance, Travel Attachments, UX Improvements)
+- **Expense Sheets (MVP)** — `ExpenseSheet` + `ExpenseLine` CRUD under Work Area > Expenses. Sheet types: Pre-Project, During-Project, Admin/General, Reimbursement. Line items with date, category, vendor, description, amount, GST, payment mode, bill attachment (file upload). Status workflow: DRAFT → SUBMITTED → APPROVED → REJECTED → PAID. Event-sourced status transitions via `expense_sheet_event`. Auto-recalculates sheet total on line changes. Summary cards with lines total, GST total, grand total.
+- **Travel proof attachments** — File upload/download on Tickets, Hotels, and Expenses in Travel Plans. Multer-based upload with 10MB limit. Stored in `uploads/travel/{tickets,hotels,expenses}/` with ULID filenames. Proof column in tables with clickable download links. Existing attachment shown in edit dialog with remove button.
+- **Finance — Travel Expenses** — New sidebar group "Finance" with "Travel Expenses" page. Two tabs: Advance Disbursement (approved plans with advance requests, Finance records payment date/amount/ref) and Reimbursement (plans with expenses submitted, Finance records reimbursement payment). DB: added `advance_paid_paise`, `advance_paid_date`, `advance_ref`, `reimbursement_paid_date` to `travel_plan`.
+- **Travel → Cost of Sale sync** — When travel plan transitions to EXPENSE_SUBMITTED, auto-creates/updates `CostOfSaleEntry` (category=TRAVEL) on linked Opportunities. Per-object cost share = total travel cost ÷ number of linked objects. Uses `receiptRef = TRAVEL_PLAN:{id}` for idempotent upsert.
+- **Close & Add New (Activities)** — When editing a Task and setting status to CLOSED, a "Close & Add New" button appears. Closes the current task and opens a pre-filled create form carrying over Category, Assigned To, Contacts, and Linked Objects.
+- **Activity tabs revamp** — Tabs changed from All/Open/Upcoming/Completed to Current/Upcoming/Planned/Completed/All. Current = today + past open/overdue. Upcoming = tomorrow + day after. Planned = beyond that. Default tab: Current.
+- **Opportunity list filters** — Added Open/Closed/All status filter (default: Open), Business Unit filter, Account filter. API: new `openStatus` and `accountId` query params.
+
+### Fixed (2026-04-28)
+- **Auth interceptor** — now redirects to Keycloak login when token is missing instead of silently sending requests without auth. Also triggers re-auth on 401 responses.
+- **Date timezone bug** — All date-only fields in Travel (tickets, hotels, expenses) now use `toLocalDateStr()` instead of `toISOString().slice(0,10)`, fixing off-by-one day issue in IST timezone.
+- **Tab persistence** — Travel plan detail tabs now use two-way binding (`[(value)]="activeTabIndex"`) so the active tab is preserved after saving tickets/hotels/expenses. Scroll position also restored.
+- **Opportunity default stage** — Changed from uppercase `CAPTURE` to lowercase `capture` to match lookup list values.
+
+### Changed (2026-04-28)
+- **Prisma schema** — `ExpenseSheetType` and `ExpenseSheetStatus` enums removed; replaced with `String @db.VarChar(32)` for flexibility. `ExpenseLine` simplified: removed `categoryId` FK, added `category` string, added `attachmentName`/`attachmentPath`, added `createdBy`/`updatedBy`. `ExpenseSheet` added `title`, `notes`, payment fields.
+- **Sidebar** — Added "Expenses" under Work Area, "Finance" group with "Travel Expenses" child.
+
+### Updated docs (2026-04-28)
+- `docs/modules/_status.md` — Platform features updated with all new components
+- `docs/CHANGELOG.md` — this entry
+- `docs/lessons.md` — 7 new lessons (toLocalDateStr, auth interceptor, multer+zod, p-tabs binding, enum-to-string, CoS sync idempotency)
+
 ### Added (2026-04-20 — R4.5 Bid Management + Platform Features)
 - **Tender object** — Indian government tender standards: 35+ fields covering identity (NIT/RFP number, authority, department), classification (Open/Limited/EOI/Single Source, Works/Goods/Services/Consultancy, ICB/NCB), portal (GeM/CPPP/State), financial (estimated value, EMD + mode, tender fee, document cost), key dates (publish, pre-bid, submission online/physical, tech/fin opening), terms (bid validity, completion period), eligibility (turnover, experience, similar work, certifications). Status workflow: PUBLISHED → CORRIGENDUM → PREBID_DONE → SUBMISSION_CLOSED → TECH_OPENED → FIN_OPENED → AWARDED/CANCELLED.
 - **Tender list page** — `Bid Management → Tenders` in sidebar. Filters: search, status, type, BU. Summary cards (total, open, closed, estimated value). Sortable table with deadline highlighting (red overdue, amber upcoming with days-left). Click navigates to tender detail.

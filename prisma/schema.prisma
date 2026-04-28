@@ -81,23 +81,9 @@ enum LeadSource {
   OTHER
 }
 
-enum ExpenseSheetType {
-  PRE_PROJECT
-  DURING_PROJECT
-  ADMIN_GENERAL
-  REIMBURSEMENT
-}
-
-enum ExpenseSheetStatus {
-  DRAFT
-  SUBMITTED
-  UNDER_REVIEW
-  RETURNED_FOR_CLARIFICATION
-  APPROVED
-  PAYMENT_PENDING
-  PAID
-  REJECTED
-}
+// ExpenseSheetType and ExpenseSheetStatus moved to string fields (flexible, no migration needed for new values)
+// Types: PRE_PROJECT, DURING_PROJECT, ADMIN_GENERAL, REIMBURSEMENT
+// Statuses: DRAFT, SUBMITTED, UNDER_REVIEW, RETURNED, APPROVED, PAYMENT_PENDING, PAID, REJECTED
 
 enum MaterialRequestStatus {
   DRAFT
@@ -260,6 +246,7 @@ model User {
   travelMemberships    TravelPlanTraveller[]
   passwordEntries      PasswordEntry[]        @relation("PasswordOwner")
   ownedInitiatives     Initiative[]           @relation("InitiativeOwner")
+  expenseSheets        ExpenseSheet[]         @relation("ExpenseClaimant")
   ownedTasks           Task[]                 @relation("TaskOwner")
   effortLogs           TaskEffortLog[]        @relation("EffortLogger")
   ownedRisks           Risk[]                 @relation("RiskOwner")
@@ -1286,11 +1273,12 @@ model Issue {
 // ==========================================================================
 
 model ExpenseSheet {
-  id             String             @id @db.VarChar(26)
-  businessUnitId String             @map("business_unit_id") @db.VarChar(26)
-  sheetType      ExpenseSheetType   @map("sheet_type")
-  status         ExpenseSheetStatus @default(DRAFT)
-  claimantUserId String             @map("claimant_user_id") @db.VarChar(26)
+  id             String  @id @db.VarChar(26)
+  title          String  @db.VarChar(255)
+  businessUnitId String? @map("business_unit_id") @db.VarChar(26)
+  sheetType      String  @default("ADMIN_GENERAL") @map("sheet_type") @db.VarChar(32) // PRE_PROJECT, DURING_PROJECT, ADMIN_GENERAL, REIMBURSEMENT
+  status         String  @default("DRAFT") @db.VarChar(32) // DRAFT, SUBMITTED, APPROVED, REJECTED, PAID
+  claimantUserId String  @map("claimant_user_id") @db.VarChar(26)
 
   // Cost context - exactly one of these will be set based on sheetType
   opportunityId String? @map("opportunity_id") @db.VarChar(26)
@@ -1300,7 +1288,12 @@ model ExpenseSheet {
   periodFrom   DateTime @map("period_from") @db.Date
   periodTo     DateTime @map("period_to") @db.Date
   totalPaise   BigInt   @default(0) @map("total_paise")
-  currentApprovalStep Int @default(0) @map("current_approval_step")
+  notes        String?  @db.Text
+
+  // Payment fields (filled by Finance on PAID)
+  paymentDate  DateTime? @map("payment_date") @db.Date
+  paymentRef   String?   @map("payment_ref") @db.VarChar(255)
+  paymentPaise BigInt    @default(0) @map("payment_paise")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1308,8 +1301,9 @@ model ExpenseSheet {
   createdBy String    @map("created_by") @db.VarChar(26)
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
-  businessUnit BusinessUnit    @relation(fields: [businessUnitId], references: [id])
+  businessUnit BusinessUnit?   @relation(fields: [businessUnitId], references: [id])
   project      Project?        @relation(fields: [projectId], references: [id])
+  claimant     User            @relation("ExpenseClaimant", fields: [claimantUserId], references: [id])
   lines        ExpenseLine[]
   events       ExpenseSheetEvent[]
 
@@ -1323,19 +1317,20 @@ model ExpenseLine {
   id           String   @id @db.VarChar(26)
   sheetId      String   @map("sheet_id") @db.VarChar(26)
   expenseDate  DateTime @map("expense_date") @db.Date
-  categoryId   String   @map("category_id") @db.VarChar(26)
+  category     String   @db.VarChar(64) // from lookup list or free text
   vendorName   String?  @map("vendor_name") @db.VarChar(255)
-  description  String?  @db.Text
+  description  String   @db.VarChar(500)
   amountPaise  BigInt   @map("amount_paise")
   gstPaise     BigInt   @default(0) @map("gst_paise")
-  paymentMode  String   @map("payment_mode") @db.VarChar(32)
-  billUri      String?  @map("bill_uri") @db.VarChar(512)
-  reimbursable Boolean  @default(true)
-  policyExceptionFlag Boolean @default(false) @map("policy_exception_flag")
+  paymentMode  String   @default("NEFT") @map("payment_mode") @db.VarChar(32) // NEFT, CHEQUE, CASH, UPI, CARD
+  attachmentName String? @map("attachment_name") @db.VarChar(255)
+  attachmentPath String? @map("attachment_path") @db.VarChar(512)
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
 
   sheet ExpenseSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
 
@@ -1358,14 +1353,14 @@ model ExpenseCategory {
 }
 
 model ExpenseSheetEvent {
-  id         String             @id @db.VarChar(26)
-  sheetId    String             @map("sheet_id") @db.VarChar(26)
-  fromStatus ExpenseSheetStatus @map("from_status")
-  toStatus   ExpenseSheetStatus @map("to_status")
-  actorUserId String            @map("actor_user_id") @db.VarChar(26)
-  actorRole  String             @map("actor_role") @db.VarChar(32)
-  comment    String?            @db.Text
-  occurredAt DateTime           @default(now()) @map("occurred_at")
+  id         String   @id @db.VarChar(26)
+  sheetId    String   @map("sheet_id") @db.VarChar(26)
+  fromStatus String   @map("from_status") @db.VarChar(32)
+  toStatus   String   @map("to_status") @db.VarChar(32)
+  actorUserId String  @map("actor_user_id") @db.VarChar(26)
+  actorRole  String   @default("USER") @map("actor_role") @db.VarChar(32)
+  comment    String?  @db.Text
+  occurredAt DateTime @default(now()) @map("occurred_at")
 
   sheet ExpenseSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
 
@@ -1609,8 +1604,12 @@ model TravelPlan {
   businessUnitId    String?  @map("business_unit_id") @db.VarChar(26)
   advanceAmountPaise BigInt  @default(0) @map("advance_amount_paise")
   advanceStatus     String   @default("NOT_REQUESTED") @map("advance_status") @db.VarChar(32) // NOT_REQUESTED, REQUESTED, APPROVED, DISBURSED
+  advancePaidPaise  BigInt   @default(0) @map("advance_paid_paise")
+  advancePaidDate   DateTime? @map("advance_paid_date") @db.Date
+  advanceRef        String?  @map("advance_ref") @db.VarChar(255)
   reimbursementStatus    String @default("PENDING") @map("reimbursement_status") @db.VarChar(32) // PENDING, SUBMITTED, APPROVED, PAID
   reimbursementPaidPaise BigInt @default(0) @map("reimbursement_paid_paise")
+  reimbursementPaidDate  DateTime? @map("reimbursement_paid_date") @db.Date
   reimbursementRef       String? @map("reimbursement_ref") @db.VarChar(255)
   notes             String?  @db.Text
   rejectionReason   String?  @map("rejection_reason") @db.Text
@@ -1723,7 +1722,9 @@ model TravelPlanExpense {
   expenseDate  DateTime @map("expense_date") @db.Date
   description  String   @db.VarChar(500)
   amountPaise  BigInt   @map("amount_paise")
-  receiptRef   String?  @map("receipt_ref") @db.VarChar(255)
+  receiptRef     String?  @map("receipt_ref") @db.VarChar(255)
+  attachmentName String?  @map("attachment_name") @db.VarChar(255)
+  attachmentPath String?  @map("attachment_path") @db.VarChar(512)
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

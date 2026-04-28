@@ -223,3 +223,27 @@ Format per entry: short rule, then **Why** (the incident) and **How to apply** (
 ### Standalone Cash Flow page avoids deep nesting in project detail tabs
 **Why:** Cash Flow involves two sub-sections (Inflow Plan + Cash Flow Periods), each with their own CRUD. Nesting this inside a project detail tab created too many layers of UI (project detail > tab > sub-section > dialog).
 **How to apply:** For complex financial views that span a single project, consider a standalone page with a project selector dropdown instead of embedding in the project detail tabs. The project detail can link to it.
+
+### Use `toLocalDateStr()` not `.toISOString().slice(0,10)` for date-only fields
+**Why:** `toISOString()` converts to UTC. In IST (UTC+5:30), a date like April 22 selected at any time before 5:30 AM becomes April 21 in UTC. Users reported dates being off by one day when saving expenses.
+**How to apply:** Always use the `toLocalDateStr(d)` helper (`getFullYear/getMonth/getDate`) when sending date-only fields to the API. This applies to all FormData and JSON payloads where the API expects `YYYY-MM-DD`.
+
+### Auth interceptor should redirect to login when token is missing, not silently skip
+**Why:** The original interceptor sent API requests without an Authorization header when `getAccessToken()` returned empty (stale OIDC session). This caused confusing "Authentication required" errors on the form instead of redirecting to login.
+**How to apply:** In the auth interceptor, when token is falsy, call `oidc.authorize()` to trigger re-login and throw an error. Also intercept 401 responses to trigger re-auth.
+
+### Multer endpoints need manual Zod parsing from `req.body` strings
+**Why:** When switching from `express.json()` to `multer` for file upload, `req.body` values become strings (from multipart form-data), not typed JSON. The Zod `validate()` middleware runs before multer, so it sees the raw body.
+**How to apply:** For endpoints that accept both file uploads and form fields, use `multer.single('file')` directly (skip `validate()`), then manually call `Schema.safeParse()` on `req.body` with coercion. Clean up the uploaded file on validation failure.
+
+### PrimeNG `p-tabs` `[value]` resets on re-render — use two-way binding
+**Why:** Using `<p-tabs [value]="0">` (one-way) resets the tab to index 0 whenever Angular re-renders the component (e.g. after `loadPlan()`). Users were thrown back to the Tickets tab after saving an expense.
+**How to apply:** Use `[(value)]="activeTabIndex"` with a component property. This preserves the active tab across data reloads.
+
+### Prisma enum-to-string migration: use `db push` for dev flexibility
+**Why:** Prisma enums require migrations for each new value. Converting to `String @db.VarChar(32)` gives flexibility to add statuses without schema changes. Used for ExpenseSheet status/type.
+**How to apply:** For fields where values may expand (statuses, types, categories), prefer `String @db.VarChar(n)` over Prisma enums. Document valid values in comments. Use `db push` for dev; write formal migrations for production.
+
+### Cost of Sale sync: use `receiptRef` as idempotency key
+**Why:** When travel expenses are synced to Opportunity Cost of Sale, we need to update existing entries rather than creating duplicates. Using `receiptRef = 'TRAVEL_PLAN:{id}'` as a convention lets us find and update the right entry.
+**How to apply:** For auto-generated Cost of Sale entries from external modules, use a structured `receiptRef` pattern (e.g. `TRAVEL_PLAN:01KQ...`) to identify and upsert entries idempotently.

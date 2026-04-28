@@ -211,6 +211,7 @@ export class ShellComponent implements OnInit, OnDestroy {
         { label: 'Calendar', icon: 'pi pi-calendar', route: '/work-area/calendar' },
         { label: 'Activities', icon: 'pi pi-list', route: '/work-area/activities' },
         { label: 'Travels', icon: 'pi pi-car', route: '/work-area/travels' },
+        { label: 'Expenses', icon: 'pi pi-receipt', route: '/work-area/expense-sheets' },
         { label: 'Passwords', icon: 'pi pi-lock', route: '/work-area/passwords' },
       ],
     },
@@ -246,6 +247,14 @@ export class ShellComponent implements OnInit, OnDestroy {
       expanded: false,
       children: [
         { label: 'Tenders', icon: 'pi pi-file', route: '/bid-management/tenders' },
+      ],
+    },
+    {
+      label: 'Finance',
+      icon: 'pi pi-indian-rupee',
+      expanded: false,
+      children: [
+        { label: 'Travel Expenses', icon: 'pi pi-car', route: '/finance/travel-expenses' },
       ],
     },
     { label: 'Expenses', icon: 'pi pi-wallet', route: '/expenses' },

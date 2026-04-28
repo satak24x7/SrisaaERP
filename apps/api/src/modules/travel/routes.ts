@@ -1,11 +1,30 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
+import path from 'path';
+import fs from 'fs';
+import multer from 'multer';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
 import { notify } from '../notification/service.js';
+
+const TRAVEL_UPLOAD_DIR = path.resolve(process.cwd(), '../../uploads/travel');
+for (const sub of ['tickets', 'hotels', 'expenses']) {
+  const dir = path.join(TRAVEL_UPLOAD_DIR, sub);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+function travelUpload(subdir: string) {
+  return multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, path.join(TRAVEL_UPLOAD_DIR, subdir)),
+      filename: (_req, file, cb) => cb(null, `${newId()}${path.extname(file.originalname)}`),
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  });
+}
 
 // --- Zod schemas ---
 
@@ -199,6 +218,8 @@ function planToDto(row: Record<string, unknown>, entityNames: Map<string, string
       expenseDate: (e.expenseDate as Date).toISOString().slice(0, 10),
       description: e.description, amountPaise: toBigNum(e.amountPaise as bigint),
       receiptRef: e.receiptRef ?? null,
+      attachmentName: e.attachmentName ?? null,
+      attachmentPath: e.attachmentPath ?? null,
     })),
     summary: {
       ticketsTotal, hotelsTotal, expensesTotal, costOfTravel,
@@ -245,6 +266,72 @@ async function syncTravelAssociations(planId: string, associations: z.infer<type
   await prisma.travelPlanAssociation.deleteMany({ where: { travelPlanId: planId } });
   if (associations.length > 0) {
     await prisma.travelPlanAssociation.createMany({ data: associations.map((a) => ({ id: newId(), travelPlanId: planId, entityType: a.entityType, entityId: a.entityId })) });
+  }
+}
+
+/**
+ * Sync travel plan cost share to linked Opportunity Cost of Sale entries.
+ * Creates/updates one CostOfSaleEntry per linked opportunity with category=TRAVEL.
+ * The description includes the travel plan title so it's identifiable.
+ * Uses a convention: receiptRef = `TRAVEL_PLAN:${planId}` to find existing entries.
+ */
+async function syncCostOfSale(planId: string, actorUserId: string): Promise<void> {
+  const plan = await prisma.travelPlan.findUnique({
+    where: { id: planId },
+    include: {
+      associations: true,
+      tickets: { where: { deletedAt: null }, select: { amountPaise: true } },
+      hotels: { where: { deletedAt: null }, select: { amountPaise: true } },
+      expenses: { where: { deletedAt: null }, select: { amountPaise: true } },
+    },
+  });
+  if (!plan) return;
+
+  const oppIds = plan.associations
+    .filter((a) => a.entityType === 'OPPORTUNITY')
+    .map((a) => a.entityId);
+  if (oppIds.length === 0) return;
+
+  const ticketsTotal = plan.tickets.reduce((s, t) => s + Number(t.amountPaise), 0);
+  const hotelsTotal = plan.hotels.reduce((s, h) => s + Number(h.amountPaise), 0);
+  const expensesTotal = plan.expenses.reduce((s, e) => s + Number(e.amountPaise), 0);
+  const costOfTravel = ticketsTotal + hotelsTotal + expensesTotal;
+  const totalLinked = plan.associations.length || 1;
+  const perObjectShare = Math.round(costOfTravel / totalLinked);
+
+  const ref = `TRAVEL_PLAN:${planId}`;
+  const actor = actorUserId.length <= 26 ? actorUserId : actorUserId.slice(0, 26);
+
+  for (const oppId of oppIds) {
+    const existing = await prisma.costOfSaleEntry.findFirst({
+      where: { opportunityId: oppId, receiptRef: ref, deletedAt: null },
+    });
+
+    if (perObjectShare === 0 && existing) {
+      // Remove if cost went to zero
+      await prisma.costOfSaleEntry.update({ where: { id: existing.id }, data: { deletedAt: new Date() } });
+    } else if (perObjectShare > 0 && existing) {
+      // Update existing
+      await prisma.costOfSaleEntry.update({
+        where: { id: existing.id },
+        data: {
+          amountPaise: BigInt(perObjectShare),
+          description: `Travel: ${plan.title}`,
+          entryDate: plan.startDate,
+          updatedBy: actor,
+        },
+      });
+    } else if (perObjectShare > 0 && !existing) {
+      // Create new
+      await prisma.costOfSaleEntry.create({
+        data: {
+          id: newId(), opportunityId: oppId, category: 'TRAVEL',
+          entryDate: plan.startDate, description: `Travel: ${plan.title}`,
+          amountPaise: BigInt(perObjectShare), status: 'SPENT',
+          receiptRef: ref, createdBy: actor, updatedBy: actor,
+        },
+      });
+    }
   }
 }
 
@@ -487,38 +574,67 @@ travelRouter.post('/:id/:action', validate({ params: TransitionParams, body: Tra
     });
   }
 
+  // Sync travel cost share to linked Opportunity Cost of Sale on expense submission
+  if (actionName === 'submit-expenses') {
+    await syncCostOfSale(plan.id, actorId(req));
+  }
+
   res.json({ data: { status: transition.to } });
 }));
 
 // --- Nested: Tickets ---
 
-travelRouter.post('/:id/tickets', validate({ params: IdParams, body: CreateTicket }), asyncHandler(async (req, res) => {
-  const plan = await prisma.travelPlan.findFirst({ where: { id: req.params.id as string, deletedAt: null } });
+travelRouter.post('/:id/tickets', travelUpload('tickets').single('file'), asyncHandler(async (req, res) => {
+  const id = req.params.id as string;
+  if (!id || id.length > 26) throw errors.validation('Invalid travel plan ID');
+  const plan = await prisma.travelPlan.findFirst({ where: { id, deletedAt: null } });
   if (!plan) throw errors.notFound('Travel plan not found');
-  const body = req.body as z.infer<typeof CreateTicket>;
+  const body = req.body as Record<string, string>;
+  const parsed = CreateTicket.safeParse({
+    ticketType: body.ticketType, fromLocation: body.fromLocation, toLocation: body.toLocation,
+    travelDate: body.travelDate, returnDate: body.returnDate || undefined,
+    bookingRef: body.bookingRef || undefined, amountPaise: body.amountPaise ? Number(body.amountPaise) : undefined,
+    notes: body.notes || undefined, attachmentName: body.attachmentName || undefined, attachmentPath: body.attachmentPath || undefined,
+  });
+  if (!parsed.success) { if (req.file) fs.unlinkSync(req.file.path); throw errors.validation(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')); }
   const actor = actorId(req);
   const row = await prisma.travelPlanTicket.create({
     data: {
-      id: newId(), travelPlanId: plan.id, ticketType: body.ticketType,
-      fromLocation: body.fromLocation, toLocation: body.toLocation,
-      travelDate: new Date(body.travelDate), returnDate: body.returnDate ? new Date(body.returnDate) : null,
-      bookingRef: body.bookingRef ?? null, amountPaise: BigInt(body.amountPaise),
-      notes: body.notes ?? null, createdBy: actor, updatedBy: actor,
+      id: newId(), travelPlanId: plan.id, ticketType: parsed.data.ticketType,
+      fromLocation: parsed.data.fromLocation, toLocation: parsed.data.toLocation,
+      travelDate: new Date(parsed.data.travelDate), returnDate: parsed.data.returnDate ? new Date(parsed.data.returnDate) : null,
+      bookingRef: parsed.data.bookingRef ?? null, amountPaise: BigInt(parsed.data.amountPaise),
+      notes: parsed.data.notes ?? null,
+      attachmentName: req.file?.originalname ?? null, attachmentPath: req.file?.filename ?? null,
+      createdBy: actor, updatedBy: actor,
     },
   });
   res.status(201).json({ data: { id: row.id } });
 }));
 
-travelRouter.patch('/:id/tickets/:subId', validate({ params: SubIdParams, body: UpdateTicket }), asyncHandler(async (req, res) => {
-  const ticket = await prisma.travelPlanTicket.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
+travelRouter.patch('/:id/tickets/:subId', travelUpload('tickets').single('file'), asyncHandler(async (req, res) => {
+  const subId = req.params.subId as string;
+  const planId = req.params.id as string;
+  if (!subId || subId.length > 26 || !planId || planId.length > 26) throw errors.validation('Invalid ID');
+  const ticket = await prisma.travelPlanTicket.findFirst({ where: { id: subId, travelPlanId: planId, deletedAt: null } });
   if (!ticket) throw errors.notFound('Ticket not found');
-  const body = req.body as z.infer<typeof UpdateTicket>;
+  const body = req.body as Record<string, string>;
   const data: Record<string, unknown> = { updatedBy: actorId(req) };
-  for (const [k, v] of Object.entries(body)) {
-    if (v === undefined) continue;
-    if (k === 'travelDate' || k === 'returnDate') { data[k] = v ? new Date(v as string) : null; continue; }
-    if (k === 'amountPaise') { data[k] = BigInt(v as number); continue; }
-    data[k] = v;
+  if (body.ticketType !== undefined) data.ticketType = body.ticketType;
+  if (body.fromLocation !== undefined) data.fromLocation = body.fromLocation;
+  if (body.toLocation !== undefined) data.toLocation = body.toLocation;
+  if (body.travelDate !== undefined) data.travelDate = new Date(body.travelDate);
+  if (body.returnDate !== undefined) data.returnDate = body.returnDate ? new Date(body.returnDate) : null;
+  if (body.bookingRef !== undefined) data.bookingRef = body.bookingRef || null;
+  if (body.amountPaise !== undefined) data.amountPaise = BigInt(Number(body.amountPaise));
+  if (body.notes !== undefined) data.notes = body.notes || null;
+  if (req.file) {
+    if (ticket.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    data.attachmentName = req.file.originalname; data.attachmentPath = req.file.filename;
+  }
+  if (body.removeAttachment === 'true' && !req.file) {
+    if (ticket.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    data.attachmentName = null; data.attachmentPath = null;
   }
   await prisma.travelPlanTicket.update({ where: { id: ticket.id }, data });
   res.json({ data: { id: ticket.id } });
@@ -527,38 +643,72 @@ travelRouter.patch('/:id/tickets/:subId', validate({ params: SubIdParams, body: 
 travelRouter.delete('/:id/tickets/:subId', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
   const ticket = await prisma.travelPlanTicket.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!ticket) throw errors.notFound('Ticket not found');
+  if (ticket.attachmentPath) { const fp = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
   await prisma.travelPlanTicket.update({ where: { id: ticket.id }, data: { deletedAt: new Date() } });
   res.status(204).end();
 }));
 
+/* GET /:id/tickets/:subId/download */
+travelRouter.get('/:id/tickets/:subId/download', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
+  const ticket = await prisma.travelPlanTicket.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
+  if (!ticket) throw errors.notFound('Ticket not found');
+  if (!ticket.attachmentPath) throw errors.notFound('No attachment');
+  const fp = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath);
+  if (!fs.existsSync(fp)) throw errors.notFound('File not found on disk');
+  res.download(fp, ticket.attachmentName ?? ticket.attachmentPath);
+}));
+
 // --- Nested: Hotels ---
 
-travelRouter.post('/:id/hotels', validate({ params: IdParams, body: CreateHotel }), asyncHandler(async (req, res) => {
-  const plan = await prisma.travelPlan.findFirst({ where: { id: req.params.id as string, deletedAt: null } });
+travelRouter.post('/:id/hotels', travelUpload('hotels').single('file'), asyncHandler(async (req, res) => {
+  const id = req.params.id as string;
+  if (!id || id.length > 26) throw errors.validation('Invalid travel plan ID');
+  const plan = await prisma.travelPlan.findFirst({ where: { id, deletedAt: null } });
   if (!plan) throw errors.notFound('Travel plan not found');
-  const body = req.body as z.infer<typeof CreateHotel>;
+  const body = req.body as Record<string, string>;
+  const parsed = CreateHotel.safeParse({
+    hotelName: body.hotelName, location: body.location,
+    checkIn: body.checkIn, checkOut: body.checkOut,
+    bookingRef: body.bookingRef || undefined, amountPaise: body.amountPaise ? Number(body.amountPaise) : undefined,
+    notes: body.notes || undefined, attachmentName: body.attachmentName || undefined, attachmentPath: body.attachmentPath || undefined,
+  });
+  if (!parsed.success) { if (req.file) fs.unlinkSync(req.file.path); throw errors.validation(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')); }
   const actor = actorId(req);
   const row = await prisma.travelPlanHotel.create({
     data: {
-      id: newId(), travelPlanId: plan.id, hotelName: body.hotelName, location: body.location,
-      checkIn: new Date(body.checkIn), checkOut: new Date(body.checkOut),
-      bookingRef: body.bookingRef ?? null, amountPaise: BigInt(body.amountPaise),
-      notes: body.notes ?? null, createdBy: actor, updatedBy: actor,
+      id: newId(), travelPlanId: plan.id, hotelName: parsed.data.hotelName, location: parsed.data.location,
+      checkIn: new Date(parsed.data.checkIn), checkOut: new Date(parsed.data.checkOut),
+      bookingRef: parsed.data.bookingRef ?? null, amountPaise: BigInt(parsed.data.amountPaise),
+      notes: parsed.data.notes ?? null,
+      attachmentName: req.file?.originalname ?? null, attachmentPath: req.file?.filename ?? null,
+      createdBy: actor, updatedBy: actor,
     },
   });
   res.status(201).json({ data: { id: row.id } });
 }));
 
-travelRouter.patch('/:id/hotels/:subId', validate({ params: SubIdParams, body: UpdateHotel }), asyncHandler(async (req, res) => {
-  const hotel = await prisma.travelPlanHotel.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
+travelRouter.patch('/:id/hotels/:subId', travelUpload('hotels').single('file'), asyncHandler(async (req, res) => {
+  const subId = req.params.subId as string;
+  const planId = req.params.id as string;
+  if (!subId || subId.length > 26 || !planId || planId.length > 26) throw errors.validation('Invalid ID');
+  const hotel = await prisma.travelPlanHotel.findFirst({ where: { id: subId, travelPlanId: planId, deletedAt: null } });
   if (!hotel) throw errors.notFound('Hotel not found');
-  const body = req.body as z.infer<typeof UpdateHotel>;
+  const body = req.body as Record<string, string>;
   const data: Record<string, unknown> = { updatedBy: actorId(req) };
-  for (const [k, v] of Object.entries(body)) {
-    if (v === undefined) continue;
-    if (k === 'checkIn' || k === 'checkOut') { data[k] = new Date(v as string); continue; }
-    if (k === 'amountPaise') { data[k] = BigInt(v as number); continue; }
-    data[k] = v;
+  if (body.hotelName !== undefined) data.hotelName = body.hotelName;
+  if (body.location !== undefined) data.location = body.location;
+  if (body.checkIn !== undefined) data.checkIn = new Date(body.checkIn);
+  if (body.checkOut !== undefined) data.checkOut = new Date(body.checkOut);
+  if (body.bookingRef !== undefined) data.bookingRef = body.bookingRef || null;
+  if (body.amountPaise !== undefined) data.amountPaise = BigInt(Number(body.amountPaise));
+  if (body.notes !== undefined) data.notes = body.notes || null;
+  if (req.file) {
+    if (hotel.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    data.attachmentName = req.file.originalname; data.attachmentPath = req.file.filename;
+  }
+  if (body.removeAttachment === 'true' && !req.file) {
+    if (hotel.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    data.attachmentName = null; data.attachmentPath = null;
   }
   await prisma.travelPlanHotel.update({ where: { id: hotel.id }, data });
   res.json({ data: { id: hotel.id } });
@@ -567,46 +717,111 @@ travelRouter.patch('/:id/hotels/:subId', validate({ params: SubIdParams, body: U
 travelRouter.delete('/:id/hotels/:subId', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
   const hotel = await prisma.travelPlanHotel.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!hotel) throw errors.notFound('Hotel not found');
+  if (hotel.attachmentPath) { const fp = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
   await prisma.travelPlanHotel.update({ where: { id: hotel.id }, data: { deletedAt: new Date() } });
   res.status(204).end();
 }));
 
+/* GET /:id/hotels/:subId/download */
+travelRouter.get('/:id/hotels/:subId/download', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
+  const hotel = await prisma.travelPlanHotel.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
+  if (!hotel) throw errors.notFound('Hotel not found');
+  if (!hotel.attachmentPath) throw errors.notFound('No attachment');
+  const fp = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath);
+  if (!fs.existsSync(fp)) throw errors.notFound('File not found on disk');
+  res.download(fp, hotel.attachmentName ?? hotel.attachmentPath);
+}));
+
 // --- Nested: Expenses ---
 
-travelRouter.post('/:id/expenses', validate({ params: IdParams, body: CreateExpense }), asyncHandler(async (req, res) => {
-  const plan = await prisma.travelPlan.findFirst({ where: { id: req.params.id as string, deletedAt: null } });
+travelRouter.post('/:id/expenses', travelUpload('expenses').single('file'), asyncHandler(async (req, res) => {
+  const id = req.params.id as string;
+  if (!id || id.length > 26) throw errors.validation('Invalid travel plan ID');
+  const plan = await prisma.travelPlan.findFirst({ where: { id, deletedAt: null } });
   if (!plan) throw errors.notFound('Travel plan not found');
-  const body = req.body as z.infer<typeof CreateExpense>;
+
+  const body = req.body as Record<string, string>;
+  const parsed = CreateExpense.safeParse({
+    category: body.category,
+    expenseDate: body.expenseDate,
+    description: body.description,
+    amountPaise: body.amountPaise ? Number(body.amountPaise) : undefined,
+    receiptRef: body.receiptRef,
+  });
+  if (!parsed.success) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    throw errors.validation(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', '));
+  }
+
   const actor = actorId(req);
   const row = await prisma.travelPlanExpense.create({
     data: {
-      id: newId(), travelPlanId: plan.id, category: body.category,
-      expenseDate: new Date(body.expenseDate), description: body.description,
-      amountPaise: BigInt(body.amountPaise), receiptRef: body.receiptRef ?? null,
+      id: newId(), travelPlanId: plan.id, category: parsed.data.category,
+      expenseDate: new Date(parsed.data.expenseDate), description: parsed.data.description,
+      amountPaise: BigInt(parsed.data.amountPaise), receiptRef: parsed.data.receiptRef ?? null,
+      attachmentName: req.file?.originalname ?? null,
+      attachmentPath: req.file?.filename ?? null,
       createdBy: actor, updatedBy: actor,
     },
   });
   res.status(201).json({ data: { id: row.id } });
 }));
 
-travelRouter.patch('/:id/expenses/:subId', validate({ params: SubIdParams, body: UpdateExpense }), asyncHandler(async (req, res) => {
-  const expense = await prisma.travelPlanExpense.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
+travelRouter.patch('/:id/expenses/:subId', travelUpload('expenses').single('file'), asyncHandler(async (req, res) => {
+  const subId = req.params.subId as string;
+  const planId = req.params.id as string;
+  if (!subId || subId.length > 26 || !planId || planId.length > 26) throw errors.validation('Invalid ID');
+  const expense = await prisma.travelPlanExpense.findFirst({ where: { id: subId, travelPlanId: planId, deletedAt: null } });
   if (!expense) throw errors.notFound('Expense not found');
-  const body = req.body as z.infer<typeof UpdateExpense>;
-  const data: Record<string, unknown> = { updatedBy: actorId(req) };
-  for (const [k, v] of Object.entries(body)) {
-    if (v === undefined) continue;
-    if (k === 'expenseDate') { data[k] = new Date(v as string); continue; }
-    if (k === 'amountPaise') { data[k] = BigInt(v as number); continue; }
-    data[k] = v;
+
+  const body = req.body as Record<string, string>;
+  const updateFields: Record<string, unknown> = {};
+  if (body.category !== undefined) updateFields.category = body.category;
+  if (body.expenseDate !== undefined) updateFields.expenseDate = new Date(body.expenseDate);
+  if (body.description !== undefined) updateFields.description = body.description;
+  if (body.amountPaise !== undefined) updateFields.amountPaise = BigInt(Number(body.amountPaise));
+  if (body.receiptRef !== undefined) updateFields.receiptRef = body.receiptRef || null;
+
+  if (req.file) {
+    // Delete old attachment if exists
+    if (expense.attachmentPath) {
+      const oldPath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+    updateFields.attachmentName = req.file.originalname;
+    updateFields.attachmentPath = req.file.filename;
   }
-  await prisma.travelPlanExpense.update({ where: { id: expense.id }, data });
+  if (body.removeAttachment === 'true' && !req.file) {
+    if (expense.attachmentPath) {
+      const oldPath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+    updateFields.attachmentName = null;
+    updateFields.attachmentPath = null;
+  }
+
+  updateFields.updatedBy = actorId(req);
+  await prisma.travelPlanExpense.update({ where: { id: expense.id }, data: updateFields });
   res.json({ data: { id: expense.id } });
 }));
 
 travelRouter.delete('/:id/expenses/:subId', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
   const expense = await prisma.travelPlanExpense.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!expense) throw errors.notFound('Expense not found');
+  if (expense.attachmentPath) {
+    const filePath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
   await prisma.travelPlanExpense.update({ where: { id: expense.id }, data: { deletedAt: new Date() } });
   res.status(204).end();
+}));
+
+/* GET /:id/expenses/:subId/download — download expense attachment */
+travelRouter.get('/:id/expenses/:subId/download', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
+  const expense = await prisma.travelPlanExpense.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
+  if (!expense) throw errors.notFound('Expense not found');
+  if (!expense.attachmentPath) throw errors.notFound('No attachment');
+  const filePath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
+  if (!fs.existsSync(filePath)) throw errors.notFound('File not found on disk');
+  res.download(filePath, expense.attachmentName ?? expense.attachmentPath);
 }));

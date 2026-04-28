@@ -28,6 +28,21 @@ export const ACTIVITIES_ROUTES: Routes = [
       import('./travel-detail.component').then((m) => m.TravelDetailComponent),
   },
   {
+    path: 'expense-sheets',
+    loadComponent: () =>
+      import('./expense-sheet-list.component').then((m) => m.ExpenseSheetListComponent),
+  },
+  {
+    path: 'expense-sheets/new',
+    loadComponent: () =>
+      import('./expense-sheet-detail.component').then((m) => m.ExpenseSheetDetailComponent),
+  },
+  {
+    path: 'expense-sheets/:id',
+    loadComponent: () =>
+      import('./expense-sheet-detail.component').then((m) => m.ExpenseSheetDetailComponent),
+  },
+  {
     path: 'passwords',
     loadComponent: () =>
       import('./password-manager.component').then((m) => m.PasswordManagerComponent),

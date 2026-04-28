@@ -75,6 +75,7 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 | R11 Tender Workflows | Managed Tenders (M1-M7), Go/No-Go Workflow, Bid Submission, DPR repository, Consortium tracker, Active Tender import | |
 | Mobile App | Ionic 8 + Capacitor 6. 4 tabs: Activities, Calendar, Travel Plans, Notifications. Direct login (email/password). Usage tracking with 2-min heartbeat. Android APK. | **Shipped** |
 | Platform | In-app notifications (web bell + mobile tab), reminder worker (1hr before events), mobile usage tracking (admin page), Keycloak auto-sync (users + roles from app), Gemini AI config in System → Configuration | **Shipped** |
+| Session 8 | Expense Sheets MVP (CRUD + line items + attachments + workflow), Finance Travel Expenses (advance + reimbursement), Travel proof attachments, Travel→CoS sync, Activity tabs (Current/Upcoming/Planned/Completed/All), Opportunity filters (Open/Closed/All + BU + Account), Close & Add New, auth hardening, date TZ fix | **Shipped** |
 
 MVP = R1 + R2 + R3 (Execution Core) + R4 (Evaluation & Award). Expense and Procurement are **fast-follows**, not optional. R10 items can be pulled into any release as needed.
 

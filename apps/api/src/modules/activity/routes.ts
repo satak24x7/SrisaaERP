@@ -65,7 +65,7 @@ const ListQuery = z.object({
   mine: z.string().optional(), // "true" to filter by current user
   entityType: z.string().optional(),
   entityId: z.string().optional(),
-  tab: z.enum(['open', 'upcoming', 'completed']).optional(),
+  tab: z.enum(['current', 'upcoming', 'planned', 'completed']).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
 });
@@ -311,23 +311,34 @@ activityRouter.get(
 
     // Tab-based filtering
     const now = new Date();
-    if (q.tab === 'open') {
-      // All activities with due date today or earlier (tasks due today/overdue + events starting today or earlier)
-      const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const startOfTomorrow = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000);
+    const endOfDayAfterTomorrow = new Date(startOfToday.getTime() + 3 * 24 * 60 * 60 * 1000 - 1);
+
+    if (q.tab === 'current') {
+      // Today and past: open & overdue activities with due/start date <= end of today
       where.OR = [
         { activityType: 'TASK', taskStatus: { in: ['OPEN', 'OVERDUE'] }, dueDateTime: { lte: endOfToday } },
-        { activityType: 'EVENT', startDateTime: { lte: endOfToday }, endDateTime: { gte: now } },
+        { activityType: 'EVENT', startDateTime: { lte: endOfToday }, endDateTime: { gte: startOfToday } },
       ];
     } else if (q.tab === 'upcoming') {
-      const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      // Tomorrow and day after tomorrow only
       where.OR = [
-        { activityType: 'EVENT', startDateTime: { gte: now, lte: nextWeek } },
-        { activityType: 'TASK', dueDateTime: { gte: now, lte: nextWeek }, taskStatus: { in: ['OPEN', 'OVERDUE'] } },
+        { activityType: 'TASK', taskStatus: { in: ['OPEN', 'OVERDUE'] }, dueDateTime: { gte: startOfTomorrow, lte: endOfDayAfterTomorrow } },
+        { activityType: 'EVENT', startDateTime: { gte: startOfTomorrow, lte: endOfDayAfterTomorrow }, taskStatus: null },
+      ];
+    } else if (q.tab === 'planned') {
+      // All other open activities beyond day-after-tomorrow
+      const startOfPlanned = new Date(endOfDayAfterTomorrow.getTime() + 1);
+      where.OR = [
+        { activityType: 'TASK', taskStatus: { in: ['OPEN', 'OVERDUE'] }, dueDateTime: { gt: endOfDayAfterTomorrow } },
+        { activityType: 'EVENT', startDateTime: { gt: endOfDayAfterTomorrow } },
       ];
     } else if (q.tab === 'completed') {
       where.OR = [
         { activityType: 'TASK', taskStatus: 'CLOSED' },
-        { activityType: 'EVENT', endDateTime: { lt: now } },
+        { activityType: 'EVENT', endDateTime: { lt: startOfToday } },
       ];
     }
 

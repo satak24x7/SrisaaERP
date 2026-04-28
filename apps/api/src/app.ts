@@ -36,6 +36,8 @@ import { projectRouter } from './modules/project/routes.js';
 import { appUsageRouter } from './modules/app-usage/routes.js';
 import { notificationRouter } from './modules/notification/routes.js';
 import { tenderListRouter } from './modules/tender/routes.js';
+import { finTravelExpensesRouter } from './modules/finance/travel-expenses.routes.js';
+import { expenseSheetRouter } from './modules/expense-sheet/routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -122,6 +124,12 @@ export function createApp(): Express {
 
   // Bid Management
   app.use('/api/v1/tenders', tenderListRouter);
+
+  // Expense Sheets
+  app.use('/api/v1/expense-sheets', expenseSheetRouter);
+
+  // Finance
+  app.use('/api/v1/finance/travel-expenses', finTravelExpensesRouter);
 
   // 404 + error handler (last)
   app.use(notFoundHandler);

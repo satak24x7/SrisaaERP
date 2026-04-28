@@ -222,8 +222,17 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
         }
       </form>
       <ng-template pTemplate="footer">
-        <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="dialogVisible=false" />
-        <p-button [label]="editId ? 'Update' : 'Create'" icon="pi pi-check" [disabled]="actForm.invalid" (onClick)="saveActivity()" />
+        <div class="flex justify-between w-full">
+          <div>
+            @if (editId && actForm.value.activityType === 'TASK' && actForm.value.taskStatus === 'CLOSED') {
+              <p-button label="Close & Add New" icon="pi pi-plus-circle" severity="success" [outlined]="true" [disabled]="actForm.invalid" (onClick)="closeAndAddNew()" />
+            }
+          </div>
+          <div class="flex gap-2">
+            <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="dialogVisible=false" />
+            <p-button [label]="editId ? 'Update' : 'Create'" icon="pi pi-check" [disabled]="actForm.invalid" (onClick)="saveActivity()" />
+          </div>
+        </div>
       </ng-template>
     </p-dialog>
   `,
@@ -252,13 +261,14 @@ export class ActivityListComponent implements OnInit {
   entityTypes = ENTITY_TYPES;
 
   tabs = [
-    { label: 'All', value: '' },
-    { label: 'Open', value: 'open' },
+    { label: 'Current', value: 'current' },
     { label: 'Upcoming', value: 'upcoming' },
+    { label: 'Planned', value: 'planned' },
     { label: 'Completed', value: 'completed' },
+    { label: 'All', value: '' },
   ];
   showMine = true;
-  activeTab = '';
+  activeTab = 'current';
   filterType = '';
   filterCategory = '';
   filterUser = '';
@@ -400,6 +410,55 @@ export class ActivityListComponent implements OnInit {
       },
       error: (err: HttpErrorResponse) => {
         this.dialogError = err.error?.error?.message ?? 'An error occurred';
+      },
+    });
+  }
+
+  closeAndAddNew(): void {
+    if (this.actForm.invalid || !this.editId) return;
+
+    // Capture the fields to carry over before saving
+    const v = this.actForm.value;
+    const carryCategory = v.categoryCode ?? '';
+    const carryUserId = v.userId ?? '';
+    const carryContacts = v.contactIds ?? [];
+    const carryAssociations = this.formAssociations.map((a) => ({ ...a }));
+
+    // Force status to CLOSED and save
+    this.actForm.patchValue({ taskStatus: 'CLOSED' });
+    const body: Record<string, unknown> = {
+      activityType: v.activityType, subject: v.subject,
+      description: v.description || undefined,
+      categoryCode: v.categoryCode, userId: v.userId,
+      isAllDay: v.isAllDay ?? false, contactIds: v.contactIds ?? [],
+      associations: this.formAssociations.filter((a) => a.entityType && a.entityId),
+      dueDateTime: v.dueDateTime instanceof Date ? v.dueDateTime.toISOString() : v.dueDateTime,
+      taskStatus: 'CLOSED',
+    };
+
+    this.http.patch(`${environment.apiBaseUrl}/activities/${this.editId}`, body).subscribe({
+      next: () => {
+        this.msg.add({ severity: 'success', summary: 'Closed', detail: 'Activity closed. Fill in subject & due date for the new activity.' });
+        this.loadActivities();
+
+        // Reset to create mode, pre-populate carried-over fields
+        this.editId = null;
+        this.dialogError = '';
+        this.actForm.reset();
+        this.actForm.patchValue({
+          activityType: 'TASK',
+          isAllDay: false,
+          taskStatus: 'OPEN',
+          categoryCode: carryCategory,
+          userId: carryUserId,
+          contactIds: carryContacts,
+        });
+        this.formAssociations = carryAssociations;
+        this.actForm.markAsDirty();
+        // Dialog stays open — it's now a "create" form
+      },
+      error: (err: HttpErrorResponse) => {
+        this.dialogError = err.error?.error?.message ?? 'Failed to close activity';
       },
     });
   }

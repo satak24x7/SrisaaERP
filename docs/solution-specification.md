@@ -268,6 +268,38 @@ Draft ─► Submitted ─► Under Review ─► Approved ─► Payment Pendin
 | Finance | Read | Read | Read | Pay | Read |
 | CXO | Read | Read | Read | Approve (high) | Read |
 
+## Expense Sheets (MVP — Session 8)
+
+Simplified expense management under Work Area > Expenses. Ships FR-4.1, FR-4.3, FR-4.5 in MVP form.
+
+**Models:** `ExpenseSheet` (title, sheetType, status, claimant, BU, opportunity/project/costCentre, period, total, payment fields) → `ExpenseLine` (date, category, vendor, description, amount, GST, paymentMode, attachment) → `ExpenseSheetEvent` (event-sourced status transitions).
+
+**Sheet types:** PRE_PROJECT, DURING_PROJECT, ADMIN_GENERAL, REIMBURSEMENT (string field, not Prisma enum).
+
+**Status workflow:** DRAFT → SUBMITTED → APPROVED/REJECTED → PAID. Only DRAFT sheets are editable. All transitions event-sourced.
+
+**Line items:** Each line captures date, category (free text), vendor, description, amount (paise), GST (paise), payment mode (NEFT/CHEQUE/CASH/UPI/CARD), and optional bill attachment (file upload, 10MB limit).
+
+**Auto-totals:** Sheet `totalPaise` recalculated on every line add/edit/delete.
+
+**Deferred:** Multi-level approval chains, policy engine, budget validation, payment batching, mobile OCR, expense workbench.
+
+## Finance Module (Session 8)
+
+New sidebar group "Finance" for payment processing by the finance team.
+
+**Travel Expenses page:** Two tabs — Advance Disbursement (approved travel plans with advance > 0; record payment date, amount, ref → sets advanceStatus=DISBURSED) and Reimbursement (plans with expenses submitted; record payment → sets reimbursementStatus=PAID).
+
+**DB additions:** `advance_paid_paise`, `advance_paid_date`, `advance_ref`, `reimbursement_paid_date` on `travel_plan`.
+
+## Travel → Cost of Sale Sync (Session 8)
+
+When a travel plan transitions to EXPENSE_SUBMITTED, the system auto-creates/updates `CostOfSaleEntry` records on linked Opportunities:
+- Category: TRAVEL
+- Amount: per-object cost share (total travel cost ÷ number of linked objects)
+- Uses `receiptRef = TRAVEL_PLAN:{planId}` for idempotent upsert
+- Soft-deletes entry if cost goes to zero
+
 ## What's deliberately minimal in v1
 
 - No GeM / CPPP live APIs — Playwright scrapers + manual upload

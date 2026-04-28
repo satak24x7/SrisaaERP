@@ -16,7 +16,7 @@ const CreateInput = z.object({
   businessUnitId: z.string().min(1).max(26),
   accountId: z.string().max(26).optional(),
   endClientAccountId: z.string().max(26).optional(),
-  stage: z.string().min(1).max(64).default('CAPTURE'),
+  stage: z.string().min(1).max(64).default('capture'),
   entryPath: z.string().min(1).max(64),
   contractValuePaise: z.coerce.number().int().nonnegative().optional(),
   probabilityPct: z.coerce.number().int().min(0).max(100).optional(),
@@ -44,7 +44,9 @@ const UpdateInput = z.object({
 
 const ListQuery = z.object({
   buId: z.string().optional(),
+  accountId: z.string().optional(),
   stage: z.string().optional(),
+  openStatus: z.enum(['open', 'closed', 'all']).default('open'),
   q: z.string().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -114,7 +116,10 @@ opportunityRouter.get(
     const q = req.query as unknown as z.infer<typeof ListQuery>;
     const where: Record<string, unknown> = { deletedAt: null };
     if (q.buId) where.businessUnitId = q.buId;
+    if (q.accountId) where.accountId = q.accountId;
     if (q.stage) where.stage = q.stage;
+    if (q.openStatus === 'open') where.closedStatus = null;
+    else if (q.openStatus === 'closed') where.closedStatus = { not: null };
     if (q.q) where.title = { contains: q.q };
 
     const take = q.limit + 1;
