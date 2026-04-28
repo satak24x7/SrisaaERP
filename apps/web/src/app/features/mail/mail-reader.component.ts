@@ -8,7 +8,9 @@ import { ButtonModule } from 'primeng/button';
 import { TagModule } from 'primeng/tag';
 import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
-import { MessageService } from 'primeng/api';
+import { MenuModule } from 'primeng/menu';
+import { InputTextModule } from 'primeng/inputtext';
+import { MessageService, type MenuItem } from 'primeng/api';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 import { environment } from '../../../environments/environment';
 import { MailComposeComponent, type ComposeData } from './mail-compose.component';
@@ -22,12 +24,13 @@ interface MailMessage {
   subject: string | null; sentAt: string;
   bodyHtml: string | null; bodyText: string | null;
   attachments: Attachment[]; isRead: boolean; isFlagged: boolean;
+  aiSummary: string | null;
 }
 
 @Component({
   selector: 'app-mail-reader',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, TagModule, SelectModule, ToastModule, MailComposeComponent],
+  imports: [CommonModule, FormsModule, ButtonModule, TagModule, SelectModule, ToastModule, MenuModule, InputTextModule, MailComposeComponent],
   providers: [MessageService],
   template: `
     <p-toast />
@@ -43,6 +46,8 @@ interface MailMessage {
             <p-button label="Reply" icon="pi pi-reply" size="small" [outlined]="true" (onClick)="reply()" />
             <p-button label="Reply All" icon="pi pi-reply" size="small" [outlined]="true" (onClick)="replyAll()" />
             <p-button label="Forward" icon="pi pi-arrow-right" size="small" [outlined]="true" (onClick)="forward()" />
+            <p-button label="Move to" icon="pi pi-folder" size="small" severity="secondary" [outlined]="true" (onClick)="readerMoveMenu.toggle($event)" />
+            <p-menu #readerMoveMenu [model]="moveMenuItems" [popup]="true" appendTo="body" />
             <p-button icon="pi pi-trash" size="small" severity="danger" [outlined]="true" (onClick)="deleteMessage()" [loading]="deleting" />
           </div>
         </div>
@@ -73,6 +78,70 @@ interface MailMessage {
             </div>
             <div class="text-sm text-gray-400">{{ message()!.sentAt | date:'medium' }}</div>
           </div>
+        </div>
+
+        <!-- AI Assistant -->
+        <div class="rounded-lg shadow-sm border border-purple-200 mb-4 overflow-hidden">
+          <div (click)="toggleAi()"
+               class="flex items-center justify-between px-5 py-3 cursor-pointer bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 transition-colors">
+            <div class="flex items-center gap-2">
+              <i class="pi pi-sparkles text-purple-600"></i>
+              <span class="font-semibold text-gray-800 text-sm">AI Assistant</span>
+              @if (aiSummary && !aiExpanded) {
+                <span class="text-xs text-gray-400 ml-1">— Summary available</span>
+              }
+            </div>
+            <div class="flex items-center gap-2">
+              @if (summarizing) {
+                <i class="pi pi-spin pi-spinner text-purple-500 text-sm"></i>
+              }
+              <i class="pi text-gray-500 text-sm" [class.pi-chevron-down]="!aiExpanded" [class.pi-chevron-up]="aiExpanded"></i>
+            </div>
+          </div>
+          @if (aiExpanded) {
+            <div class="bg-gradient-to-r from-purple-50/30 to-indigo-50/30 p-5 space-y-4">
+              <!-- Summary -->
+              <div>
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="text-sm font-medium text-gray-700">Summary</span>
+                  @if (aiSummary) {
+                    <p-button label="Regenerate" icon="pi pi-refresh" size="small" [text]="true" severity="secondary" (onClick)="aiSummarize(true)" [loading]="summarizing" [disabled]="summarizing || drafting" />
+                  }
+                </div>
+                @if (summarizing && !aiSummary) {
+                  <div class="flex items-center gap-2 text-sm text-purple-600 py-3">
+                    <i class="pi pi-spin pi-spinner"></i> Analyzing email...
+                  </div>
+                }
+                @if (aiSummary) {
+                  <div class="bg-white rounded border border-gray-200 p-4 text-sm text-gray-700 whitespace-pre-wrap">{{ aiSummary }}</div>
+                }
+                @if (aiSummaryError) {
+                  <div class="bg-red-50 rounded border border-red-200 p-3 text-sm text-red-700">{{ aiSummaryError }}</div>
+                }
+              </div>
+
+              <hr class="border-gray-200" />
+
+              <!-- Draft Reply -->
+              <div>
+                <div class="text-sm font-medium text-gray-700 mb-2">Draft a Reply</div>
+                <div class="flex gap-2 mb-2">
+                  <input type="text" pInputText [(ngModel)]="draftPrompt" placeholder="Optional: guide the response (e.g. 'decline politely', 'ask for more details')" class="flex-1 text-sm" (keyup.enter)="aiDraftReply()" />
+                  <p-button label="Draft Reply" icon="pi pi-pencil" size="small" (onClick)="aiDraftReply()" [loading]="drafting" [disabled]="summarizing || drafting" />
+                </div>
+                @if (aiDraft) {
+                  <div class="bg-white rounded border border-gray-200 p-4 text-sm text-gray-700 mb-2">
+                    <div [innerHTML]="aiDraft"></div>
+                  </div>
+                  <p-button label="Use as Reply" icon="pi pi-reply" size="small" severity="success" (onClick)="useAiDraft()" />
+                }
+                @if (aiDraftError) {
+                  <div class="bg-red-50 rounded border border-red-200 p-3 text-sm text-red-700">{{ aiDraftError }}</div>
+                }
+              </div>
+            </div>
+          }
         </div>
 
         <!-- Body -->
@@ -156,7 +225,19 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
   loading = signal(true);
   cachedSrcdoc = '';
   deleting = false;
+  moving = false;
+  moveMenuItems: MenuItem[] = [];
   private needsResize = false;
+
+  // AI Assistant
+  aiExpanded = false;
+  aiSummary = '';
+  aiSummaryError = '';
+  aiDraft = '';
+  aiDraftError = '';
+  draftPrompt = '';
+  summarizing = false;
+  drafting = false;
 
   // Entity linking
   entityLinks: Array<{ id: string; entityType: string; entityId: string; entityName: string | null }> = [];
@@ -168,6 +249,7 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
     { label: 'Lead', value: 'LEAD' },
     { label: 'Account', value: 'ACCOUNT' },
     { label: 'Project', value: 'PROJECT' },
+    { label: 'Initiative', value: 'INITIATIVE' },
   ];
 
   ngOnInit(): void {
@@ -190,6 +272,8 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
         this.loading.set(false);
         this.needsResize = true;
         this.loadLinks();
+        this.loadFoldersForMove();
+        if (r.data.aiSummary) this.aiSummary = r.data.aiSummary;
       },
       error: () => { this.loading.set(false); },
     });
@@ -220,6 +304,7 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
       case 'LEAD': url = `${environment.apiBaseUrl}/leads?limit=200`; break;
       case 'ACCOUNT': url = `${environment.apiBaseUrl}/accounts?limit=200`; break;
       case 'PROJECT': url = `${environment.apiBaseUrl}/projects?limit=200`; break;
+      case 'INITIATIVE': url = `${environment.apiBaseUrl}/initiatives?limit=200`; break;
     }
     this.http.get<{ data: Array<{ id: string; title?: string; name?: string }> }>(url).subscribe({
       next: (r) => { this.entityOptions = r.data.map((e) => ({ id: e.id, name: e.title ?? e.name ?? e.id })); },
@@ -242,6 +327,104 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
     if (!m) return;
     this.http.delete(`${environment.apiBaseUrl}/mail/messages/${m.id}/links/${linkId}`).subscribe({
       next: () => { this.entityLinks = this.entityLinks.filter((l) => l.id !== linkId); },
+    });
+  }
+
+  toggleAi(): void {
+    this.aiExpanded = !this.aiExpanded;
+    // Auto-summarize on first expand if no summary yet
+    if (this.aiExpanded && !this.aiSummary && !this.summarizing && !this.aiSummaryError) {
+      this.aiSummarize();
+    }
+  }
+
+  aiSummarize(force = false): void {
+    const m = this.message();
+    if (!m) return;
+    if (!force && this.aiSummary) return; // Already have cached summary
+    this.summarizing = true;
+    this.aiSummaryError = '';
+    this.http.post<{ data: { summary: string; cached: boolean } }>(`${environment.apiBaseUrl}/mail/messages/${m.id}/ai-summarize`, { regenerate: force || undefined }).subscribe({
+      next: (r) => { this.aiSummary = r.data.summary; this.summarizing = false; },
+      error: (err) => {
+        this.summarizing = false;
+        this.aiSummaryError = err.error?.error?.message || 'Failed to summarize. Check Gemini API key in Configuration.';
+      },
+    });
+  }
+
+  aiDraftReply(): void {
+    const m = this.message();
+    if (!m) return;
+    this.drafting = true;
+    this.aiDraftError = '';
+    this.http.post<{ data: { draft: string } }>(`${environment.apiBaseUrl}/mail/messages/${m.id}/ai-draft`, {
+      prompt: this.draftPrompt || undefined,
+    }).subscribe({
+      next: (r) => { this.aiDraft = r.data.draft; this.drafting = false; },
+      error: (err) => {
+        this.drafting = false;
+        this.aiDraftError = err.error?.error?.message || 'Failed to draft reply. Check Gemini API key in Configuration.';
+      },
+    });
+  }
+
+  useAiDraft(): void {
+    const m = this.message();
+    if (!m || !this.aiDraft) return;
+    // Strip HTML tags to get plain text for the editable body
+    const plainDraft = this.aiDraft.replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+    this.composeDialog.open({
+      mode: 'reply', accountId: this.accountId, messageId: m.id,
+      to: [m.fromAddress],
+      subject: m.subject?.startsWith('Re: ') ? m.subject : `Re: ${m.subject ?? ''}`,
+      quotedHtml: m.bodyHtml ?? m.bodyText ?? '',
+    });
+    // Pre-fill the body text after the dialog opens
+    setTimeout(() => { this.composeDialog.bodyText = plainDraft; }, 0);
+  }
+
+  private loadFoldersForMove(): void {
+    if (!this.accountId) return;
+    const currentFolder = this.message()?.folder ?? '';
+    this.http.get<{ data: Array<{ path: string; name: string; specialUse: string | null }> }>(`${environment.apiBaseUrl}/mail/accounts/${this.accountId}/folders`).subscribe({
+      next: (r) => {
+        this.moveMenuItems = r.data
+          .filter((f) => f.path !== currentFolder)
+          .map((f) => ({
+            label: f.name,
+            icon: this.folderMenuIcon(f),
+            command: () => this.moveToFolder(f.path),
+          }));
+      },
+    });
+  }
+
+  private folderMenuIcon(f: { name: string; specialUse: string | null }): string {
+    const su = f.specialUse?.toLowerCase() ?? '';
+    const name = f.name.toLowerCase();
+    if (su.includes('inbox') || name === 'inbox') return 'pi pi-inbox';
+    if (su.includes('sent') || name.includes('sent')) return 'pi pi-send';
+    if (su.includes('draft') || name.includes('draft')) return 'pi pi-file-edit';
+    if (su.includes('trash') || name.includes('trash') || name.includes('deleted')) return 'pi pi-trash';
+    if (su.includes('junk') || name.includes('spam') || name.includes('junk')) return 'pi pi-ban';
+    if (su.includes('archive') || name.includes('archive')) return 'pi pi-box';
+    return 'pi pi-folder';
+  }
+
+  moveToFolder(toFolder: string): void {
+    const m = this.message();
+    if (!m) return;
+    this.moving = true;
+    this.http.post(`${environment.apiBaseUrl}/mail/accounts/${this.accountId}/move-messages`, {
+      folder: m.folder, uids: [m.uid], toFolder,
+    }).subscribe({
+      next: () => {
+        this.moving = false;
+        this.msg.add({ severity: 'success', summary: 'Moved', detail: `Message moved to ${toFolder}` });
+        this.goBack();
+      },
+      error: () => { this.moving = false; this.msg.add({ severity: 'error', summary: 'Failed to move message' }); },
     });
   }
 

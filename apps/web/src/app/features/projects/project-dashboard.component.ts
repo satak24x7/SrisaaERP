@@ -145,7 +145,7 @@ interface ProjectRow {
         <ng-template pTemplate="body" let-p>
           <tr [pSelectableRow]="p" class="cursor-pointer">
             <td class="font-medium">{{ p.projectCode || '-' }}</td>
-            <td class="font-medium text-blue-700">{{ p.name }}</td>
+            <td class="font-medium">{{ p.name }}</td>
             <td>{{ p.clientName }}</td>
             <td>{{ p.businessUnitName || '-' }}</td>
             <td>{{ p.projectManagerName || '-' }}</td>

@@ -5,6 +5,7 @@ import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
+import { summarizeEmail, draftEmailReply } from '../../lib/gemini.js';
 import { errors } from '../../middleware/error-handler.js';
 import * as imapService from './imap.service.js';
 import * as smtpService from './smtp.service.js';
@@ -345,6 +346,7 @@ mailRouter.get('/messages/by-uid', validate({ query: ByUidQuery }), asyncHandler
       subject: cached.subject, sentAt: cached.sentAt.toISOString(),
       bodyHtml: cached.bodyHtml, bodyText: cached.bodyText,
       attachments: cached.attachments ?? [], isRead: true, isFlagged: cached.isFlagged,
+      aiSummary: cached.aiSummary ?? null,
     },
   });
 }));
@@ -389,6 +391,7 @@ mailRouter.get('/messages/:id', validate({ params: MsgIdParams }), asyncHandler(
         subject: cached.subject, sentAt: cached.sentAt.toISOString(),
         bodyHtml: parsed.html || null, bodyText: parsed.text || null,
         attachments: attachmentsMeta, isRead: true, isFlagged: cached.isFlagged,
+        aiSummary: cached.aiSummary ?? null,
       },
     });
     return;
@@ -402,6 +405,7 @@ mailRouter.get('/messages/:id', validate({ params: MsgIdParams }), asyncHandler(
       subject: cached.subject, sentAt: cached.sentAt.toISOString(),
       bodyHtml: cached.bodyHtml, bodyText: cached.bodyText,
       attachments: cached.attachments ?? [], isRead: cached.isRead, isFlagged: cached.isFlagged,
+      aiSummary: cached.aiSummary ?? null,
     },
   });
 }));
@@ -511,6 +515,116 @@ mailRouter.post('/accounts/:id/not-spam', validate({ params: IdParams, body: Not
   });
 
   res.json({ data: { moved: body.uids.length } });
+}));
+
+/* POST /accounts/:id/move-messages — move messages to another folder */
+const MoveMessagesBody = z.object({
+  folder: z.string().min(1),
+  uids: z.array(z.coerce.number().int()).min(1),
+  toFolder: z.string().min(1),
+});
+
+mailRouter.post('/accounts/:id/move-messages', validate({ params: IdParams, body: MoveMessagesBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
+  if (!account) throw errors.notFound('Mail account not found');
+
+  const body = req.body as z.infer<typeof MoveMessagesBody>;
+  if (body.folder === body.toFolder) { res.json({ data: { moved: 0 } }); return; }
+
+  const realUids = body.uids.filter((u) => u > 0);
+  if (realUids.length > 0) {
+    await imapService.moveMessages(
+      account as unknown as Parameters<typeof imapService.moveMessages>[0],
+      body.folder, body.toFolder, realUids,
+    );
+  }
+
+  // Remove from local cache (they'll reappear in target folder on next refresh)
+  await prisma.mailMessage.deleteMany({
+    where: { mailAccountId: account.id, folder: body.folder, uid: { in: body.uids } },
+  });
+
+  res.json({ data: { moved: body.uids.length } });
+}));
+
+// ===== AI Email Assistant =====
+
+function stripHtml(html: string): string {
+  return html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function getMessageForAi(messageId: string, userId: string) {
+  const msg = await prisma.mailMessage.findFirst({
+    where: { id: messageId },
+    include: { mailAccount: { select: { userId: true } } },
+  });
+  if (!msg || msg.mailAccount.userId !== userId) return null;
+  return msg;
+}
+
+/* POST /messages/:id/ai-summarize — summarize email via Gemini (cached in DB) */
+const AiSummarizeBody = z.object({ regenerate: z.boolean().optional() });
+mailRouter.post('/messages/:id/ai-summarize', validate({ params: MsgIdParams, body: AiSummarizeBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const msg = await getMessageForAi(req.params.id as string, userId!);
+  if (!msg) throw errors.notFound('Message not found');
+
+  const regen = (req.body as z.infer<typeof AiSummarizeBody>).regenerate;
+
+  // Return cached summary if available and not forcing regenerate
+  if (msg.aiSummary && !regen) {
+    res.json({ data: { summary: msg.aiSummary, cached: true } });
+    return;
+  }
+
+  const body = msg.bodyText || (msg.bodyHtml ? stripHtml(msg.bodyHtml) : '');
+  if (!body) throw errors.validation('Email has no content to summarize');
+
+  const toAddrs = (msg.toAddresses as Array<{ address: string }>).map((a) => a.address);
+  const ccAddrs = msg.ccAddresses ? (msg.ccAddresses as Array<{ address: string }>).map((a) => a.address) : undefined;
+
+  const summary = await summarizeEmail({
+    subject: msg.subject, body, from: msg.fromAddress, to: toAddrs, cc: ccAddrs,
+  });
+
+  // Persist summary
+  await prisma.mailMessage.update({
+    where: { id: msg.id },
+    data: { aiSummary: summary, aiSummarizedAt: new Date() },
+  });
+
+  res.json({ data: { summary, cached: false } });
+}));
+
+/* POST /messages/:id/ai-draft — draft reply via Gemini */
+const AiDraftBody = z.object({ prompt: z.string().max(500).optional() });
+
+mailRouter.post('/messages/:id/ai-draft', validate({ params: MsgIdParams, body: AiDraftBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const msg = await getMessageForAi(req.params.id as string, userId!);
+  if (!msg) throw errors.notFound('Message not found');
+
+  const bodyText = msg.bodyText || (msg.bodyHtml ? stripHtml(msg.bodyHtml) : '');
+  if (!bodyText) throw errors.validation('Email has no content to draft a reply for');
+
+  const toAddrs = (msg.toAddresses as Array<{ address: string }>).map((a) => a.address);
+  const ccAddrs = msg.ccAddresses ? (msg.ccAddresses as Array<{ address: string }>).map((a) => a.address) : undefined;
+  const userPrompt = (req.body as z.infer<typeof AiDraftBody>).prompt;
+
+  const draft = await draftEmailReply(
+    { subject: msg.subject, body: bodyText, from: msg.fromAddress, to: toAddrs, cc: ccAddrs },
+    userPrompt,
+  );
+
+  res.json({ data: { draft } });
 }));
 
 // ===== Phase 2: Compose / Reply / Forward =====
@@ -648,7 +762,7 @@ mailRouter.post('/messages/:id/forward', validate({ params: MsgIdParams, body: F
 
 // ===== Phase 3: Entity Linking =====
 
-const LINK_ENTITY_TYPES = ['OPPORTUNITY', 'LEAD', 'ACCOUNT', 'PROJECT'] as const;
+const LINK_ENTITY_TYPES = ['OPPORTUNITY', 'LEAD', 'ACCOUNT', 'PROJECT', 'INITIATIVE'] as const;
 const CreateLinkBody = z.object({
   entityType: z.enum(LINK_ENTITY_TYPES),
   entityId: z.string().min(1).max(26),
@@ -715,6 +829,9 @@ mailRouter.get('/messages/:id/links', validate({ params: MsgIdParams }), asyncHa
       } else if (link.entityType === 'PROJECT') {
         const e = await prisma.project.findUnique({ where: { id: link.entityId }, select: { name: true } });
         name = e?.name ?? null;
+      } else if (link.entityType === 'INITIATIVE') {
+        const e = await prisma.initiative.findUnique({ where: { id: link.entityId }, select: { title: true } });
+        name = e?.title ?? null;
       }
     } catch { /* ignore */ }
     enriched.push({ id: link.id, entityType: link.entityType, entityId: link.entityId, entityName: name });

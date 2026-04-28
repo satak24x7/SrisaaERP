@@ -172,3 +172,98 @@ export async function analyzeRfp(filePaths: Array<{ path: string; mimeType: stri
   logger.info({ recommendation: analysis.recommendation }, 'RFP analysis complete');
   return analysis;
 }
+
+// ===== Email AI Functions =====
+
+interface EmailContext {
+  subject: string | null;
+  body: string;
+  from: string;
+  to: string[];
+  cc?: string[];
+}
+
+async function getGeminiConfig() {
+  const [keyRow, modelRow] = await Promise.all([
+    prisma.appConfig.findUnique({ where: { key: 'gemini_api_key' } }),
+    prisma.appConfig.findUnique({ where: { key: 'gemini_model' } }),
+  ]);
+  const apiKey = keyRow?.value;
+  if (!apiKey) throw new Error('Gemini API Key is not configured. Go to System → Configuration to set it.');
+  const model = modelRow?.value || DEFAULT_MODEL;
+  return { apiKey, model };
+}
+
+async function callGemini(prompt: string, temperature: number): Promise<string> {
+  const { apiKey, model } = await getGeminiConfig();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+
+  const res = await fetch(`${url}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature, maxOutputTokens: 4096 },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    logger.error({ status: res.status, err: errText }, 'Gemini API error');
+    if (res.status === 429) throw new Error('Gemini API rate limit exceeded. Please wait and try again.');
+    if (res.status === 403) throw new Error('Gemini API key is invalid. Check System → Configuration.');
+    throw new Error(`Gemini API error (${res.status}).`);
+  }
+
+  const result = await res.json() as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+  const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini returned empty response');
+  return text.trim();
+}
+
+/**
+ * Summarize an email thread using Gemini.
+ */
+export async function summarizeEmail(ctx: EmailContext): Promise<string> {
+  const prompt = `Summarize the following email concisely. Highlight key points, action items, decisions, and any deadlines mentioned. Use bullet points for clarity.
+
+Subject: ${ctx.subject ?? '(no subject)'}
+From: ${ctx.from}
+To: ${ctx.to.join(', ')}${ctx.cc?.length ? `\nCc: ${ctx.cc.join(', ')}` : ''}
+
+--- Email Body ---
+${ctx.body}
+--- End ---
+
+Provide a clear, concise summary:`;
+
+  logger.info('Summarizing email via Gemini');
+  return callGemini(prompt, 0.2);
+}
+
+/**
+ * Draft a reply to an email using Gemini.
+ */
+export async function draftEmailReply(ctx: EmailContext, userPrompt?: string): Promise<string> {
+  const instruction = userPrompt?.trim()
+    ? `The user wants the reply to: ${userPrompt}`
+    : 'Draft a professional, helpful reply.';
+
+  const prompt = `Draft a professional email reply to the following email. ${instruction}
+
+Original Email:
+Subject: ${ctx.subject ?? '(no subject)'}
+From: ${ctx.from}
+To: ${ctx.to.join(', ')}${ctx.cc?.length ? `\nCc: ${ctx.cc.join(', ')}` : ''}
+
+--- Email Body ---
+${ctx.body}
+--- End ---
+
+Write ONLY the reply body (no subject line, no greeting headers like "Subject:" or "To:"). Start with an appropriate greeting and end with a sign-off. Keep it concise and professional. Use HTML formatting (<p>, <br>, <ul>, <li>) for the response.`;
+
+  logger.info('Drafting email reply via Gemini');
+  return callGemini(prompt, 0.5);
+}

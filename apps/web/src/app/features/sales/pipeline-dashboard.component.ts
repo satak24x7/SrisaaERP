@@ -151,7 +151,7 @@ interface OrdersData {
           </ng-template>
           <ng-template pTemplate="body" let-opp>
             <tr class="cursor-pointer hover:bg-gray-50" (click)="goToOpp(opp.id)">
-              <td class="font-medium text-blue-700">{{ opp.title }}</td>
+              <td class="font-medium">{{ opp.title }}</td>
               <td>{{ opp.accountName || '-' }}</td>
               <td>{{ opp.businessUnitName || '-' }}</td>
               <td><p-tag [value]="opp.stage" [severity]="stageSeverity(opp.stage)" /></td>

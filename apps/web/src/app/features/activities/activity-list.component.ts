@@ -46,6 +46,7 @@ const ENTITY_TYPES = [
   { label: 'Contact', value: 'CONTACT' },
   { label: 'Influencer', value: 'INFLUENCER' },
   { label: 'Project', value: 'PROJECT' },
+  { label: 'Initiative', value: 'INITIATIVE' },
 ];
 const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYPES.map((e) => [e.value, e.label]));
 
@@ -255,6 +256,7 @@ export class ActivityListComponent implements OnInit {
   accountOptions = signal<Ref[]>([]);
   influencerOptions = signal<Ref[]>([]);
   projectOptions = signal<Ref[]>([]);
+  initiativeOptions = signal<Ref[]>([]);
 
   activityTypes = ACTIVITY_TYPES;
   taskStatuses = TASK_STATUSES;
@@ -323,6 +325,9 @@ export class ActivityListComponent implements OnInit {
     });
     this.http.get<{ data: Array<{ id: string; name: string }> }>(`${environment.apiBaseUrl}/projects?limit=200`).subscribe({
       next: (r) => this.projectOptions.set(r.data.map((p) => ({ id: p.id, name: p.name }))),
+    });
+    this.http.get<{ data: Array<{ id: string; title: string }> }>(`${environment.apiBaseUrl}/initiatives?limit=200`).subscribe({
+      next: (r) => this.initiativeOptions.set(r.data.map((i) => ({ id: i.id, name: i.title }))),
     });
   }
 
@@ -497,6 +502,7 @@ export class ActivityListComponent implements OnInit {
       case 'CONTACT': return this.contactOptions();
       case 'INFLUENCER': return this.influencerOptions();
       case 'PROJECT': return this.projectOptions();
+      case 'INITIATIVE': return this.initiativeOptions();
       default: return [];
     }
   }

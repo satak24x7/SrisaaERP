@@ -10,7 +10,8 @@ import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { CheckboxModule } from 'primeng/checkbox';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
-import { ConfirmationService, MessageService } from 'primeng/api';
+import { MenuModule } from 'primeng/menu';
+import { ConfirmationService, MessageService, type MenuItem } from 'primeng/api';
 import { environment } from '../../../environments/environment';
 import { MailComposeComponent, type ComposeData } from './mail-compose.component';
 
@@ -26,7 +27,7 @@ interface MessageRow {
 @Component({
   selector: 'app-mail-inbox',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, TableModule, TagModule, SelectModule, ToastModule, CheckboxModule, ConfirmDialogModule, MailComposeComponent],
+  imports: [CommonModule, FormsModule, ButtonModule, TableModule, TagModule, SelectModule, ToastModule, CheckboxModule, ConfirmDialogModule, MenuModule, MailComposeComponent],
   providers: [MessageService, ConfirmationService],
   template: `
     <p-toast /><p-confirmDialog />
@@ -47,6 +48,8 @@ interface MessageRow {
           <p-button label="Compose" icon="pi pi-pencil" (onClick)="openCompose()" />
           @if (selectedUids.length > 0) {
             <p-button label="Delete ({{ selectedUids.length }})" icon="pi pi-trash" severity="danger" [outlined]="true" (onClick)="bulkDelete()" />
+            <p-button label="Move to" icon="pi pi-folder" severity="secondary" [outlined]="true" (onClick)="moveMenu.toggle($event)" />
+            <p-menu #moveMenu [model]="moveMenuItems" [popup]="true" appendTo="body" />
           }
           @if (selectedUids.length > 0 && isJunkOrSpam()) {
             <p-button label="Not Spam ({{ selectedUids.length }})" icon="pi pi-check" severity="success" [outlined]="true" (onClick)="markNotSpam()" />
@@ -73,7 +76,7 @@ interface MessageRow {
               @for (f of folders(); track f.path) {
                 <button class="w-full text-left px-3 py-2 rounded text-sm flex items-center justify-between transition-colors"
                   [class]="selectedFolder === f.path ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'"
-                  (click)="selectedFolder = f.path; currentPage = 1; loadMessages()">
+                  (click)="selectedFolder = f.path; currentPage = 1; buildMoveMenu(); loadMessages()">
                   <span class="flex items-center gap-2">
                     <i [class]="folderIcon(f)"></i> {{ f.name }}
                   </span>
@@ -178,6 +181,7 @@ export class MailInboxComponent implements OnInit {
   searchQuery = '';
   isSearching = false;
   private initialLoadDone = false;
+  moveMenuItems: MenuItem[] = [];
 
   // Map uid → db id for navigation
   private uidToDbId = new Map<number, string>();
@@ -220,7 +224,7 @@ export class MailInboxComponent implements OnInit {
       ]);
     }
     this.http.get<{ data: FolderInfo[] }>(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/folders`).subscribe({
-      next: (r) => { this.folders.set(r.data); },
+      next: (r) => { this.folders.set(r.data); this.buildMoveMenu(); },
       error: () => {},
     });
   }
@@ -365,6 +369,31 @@ export class MailInboxComponent implements OnInit {
   openCompose(): void {
     if (!this.selectedAccountId) return;
     this.composeDialog.open({ mode: 'compose', accountId: this.selectedAccountId });
+  }
+
+  buildMoveMenu(): void {
+    this.moveMenuItems = this.folders()
+      .filter((f) => f.path !== this.selectedFolder)
+      .map((f) => ({
+        label: f.name,
+        icon: this.folderIcon(f),
+        command: () => this.moveToFolder(f.path),
+      }));
+  }
+
+  moveToFolder(toFolder: string): void {
+    if (!this.selectedAccountId || this.selectedUids.length === 0) return;
+    this.http.post(`${environment.apiBaseUrl}/mail/accounts/${this.selectedAccountId}/move-messages`, {
+      folder: this.selectedFolder, uids: this.selectedUids, toFolder,
+    }).subscribe({
+      next: () => {
+        this.msg.add({ severity: 'success', summary: 'Moved', detail: `${this.selectedUids.length} message(s) moved to ${toFolder}` });
+        this.selectedUids = [];
+        this.selectAll = false;
+        this.loadMessages();
+      },
+      error: () => { this.msg.add({ severity: 'error', summary: 'Failed to move messages' }); },
+    });
   }
 
   folderIcon(f: FolderInfo): string {

@@ -100,7 +100,7 @@ const STATUS_OPTIONS = [
           </ng-template>
           <ng-template pTemplate="body" let-i>
             <tr class="cursor-pointer hover:bg-gray-50" (click)="openDetail(i)">
-              <td><span class="font-medium text-blue-700">{{ i.title }}</span></td>
+              <td><span class="font-medium">{{ i.title }}</span></td>
               <td><span class="text-sm">{{ i.businessUnitName || '—' }}</span></td>
               <td><span class="text-sm">{{ i.ownerName || '—' }}</span></td>
               <td><p-tag [value]="formatStatus(i.status)" [severity]="statusSeverity(i.status)" [style]="{'font-size':'0.7rem'}" /></td>

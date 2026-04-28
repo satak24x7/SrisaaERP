@@ -1920,6 +1920,9 @@ model MailMessage {
   isFlagged       Boolean  @default(false) @map("is_flagged")
   sentAt          DateTime @map("sent_at")
 
+  aiSummary       String?  @map("ai_summary") @db.Text
+  aiSummarizedAt  DateTime? @map("ai_summarized_at")
+
   createdAt DateTime @default(now()) @map("created_at")
 
   mailAccount  MailAccount     @relation(fields: [mailAccountId], references: [id], onDelete: Cascade)

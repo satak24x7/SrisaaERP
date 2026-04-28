@@ -68,6 +68,7 @@ const ENTITY_TYPES = [
   { label: 'Contact', value: 'CONTACT' },
   { label: 'Influencer', value: 'INFLUENCER' },
   { label: 'Project', value: 'PROJECT' },
+  { label: 'Initiative', value: 'INITIATIVE' },
 ];
 
 @Component({
@@ -316,6 +317,8 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
   leadOptions = signal<Ref[]>([]);
   accountOptions = signal<Ref[]>([]);
   influencerOptions = signal<Ref[]>([]);
+  projectOptions = signal<Ref[]>([]);
+  initiativeOptions = signal<Ref[]>([]);
 
   activityTypes = ACTIVITY_TYPES;
   taskStatuses = TASK_STATUSES;
@@ -420,6 +423,12 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
     });
     this.http.get<{ data: Ref[] }>(`${environment.apiBaseUrl}/influencers?limit=200`).subscribe({
       next: (r) => this.influencerOptions.set(r.data),
+    });
+    this.http.get<{ data: Array<{ id: string; name: string }> }>(`${environment.apiBaseUrl}/projects?limit=200`).subscribe({
+      next: (r) => this.projectOptions.set(r.data.map((p) => ({ id: p.id, name: p.name }))),
+    });
+    this.http.get<{ data: Array<{ id: string; title: string }> }>(`${environment.apiBaseUrl}/initiatives?limit=200`).subscribe({
+      next: (r) => this.initiativeOptions.set(r.data.map((i) => ({ id: i.id, name: i.title }))),
     });
   }
 
@@ -598,6 +607,8 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
       case 'ACCOUNT': return this.accountOptions();
       case 'CONTACT': return this.contactOptions();
       case 'INFLUENCER': return this.influencerOptions();
+      case 'PROJECT': return this.projectOptions();
+      case 'INITIATIVE': return this.initiativeOptions();
       default: return [];
     }
   }
