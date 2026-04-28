@@ -1,4 +1,5 @@
 import { Component, OnInit, inject, signal, ElementRef, ViewChild, AfterViewChecked } from '@angular/core';
+import type { MailComposeComponent as MailComposeType } from './mail-compose.component';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
@@ -8,6 +9,7 @@ import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 import { environment } from '../../../environments/environment';
+import { MailComposeComponent, type ComposeData } from './mail-compose.component';
 
 interface Attachment { index: number; filename: string; contentType: string; size: number; }
 interface MailMessage {
@@ -23,7 +25,7 @@ interface MailMessage {
 @Component({
   selector: 'app-mail-reader',
   standalone: true,
-  imports: [CommonModule, ButtonModule, TagModule, ToastModule],
+  imports: [CommonModule, ButtonModule, TagModule, ToastModule, MailComposeComponent],
   providers: [MessageService],
   template: `
     <p-toast />
@@ -35,6 +37,11 @@ interface MailMessage {
         <div class="flex items-center gap-3 mb-4">
           <p-button icon="pi pi-arrow-left" [text]="true" [rounded]="true" (onClick)="goBack()" />
           <h2 class="text-xl font-bold text-gray-800 flex-1">{{ message()!.subject || '(no subject)' }}</h2>
+          <div class="flex gap-2">
+            <p-button label="Reply" icon="pi pi-reply" size="small" [outlined]="true" (onClick)="reply()" />
+            <p-button label="Reply All" icon="pi pi-reply" size="small" [outlined]="true" (onClick)="replyAll()" />
+            <p-button label="Forward" icon="pi pi-arrow-right" size="small" [outlined]="true" (onClick)="forward()" />
+          </div>
         </div>
 
         <!-- Message metadata -->
@@ -104,6 +111,7 @@ interface MailMessage {
         </div>
       }
     </div>
+    <app-mail-compose #composeDialog />
   `,
 })
 export class MailReaderComponent implements OnInit, AfterViewChecked {
@@ -114,7 +122,9 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
   private readonly sanitizer = inject(DomSanitizer);
 
   @ViewChild('bodyFrame') bodyFrame?: ElementRef<HTMLIFrameElement>;
+  @ViewChild('composeDialog') composeDialog!: MailComposeComponent;
 
+  private accountId = '';
   message = signal<MailMessage | null>(null);
   loading = signal(true);
   cachedSrcdoc = '';
@@ -129,6 +139,7 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
       this.loading.set(false);
       return;
     }
+    this.accountId = accountId;
 
     this.http.get<{ data: MailMessage }>(`${environment.apiBaseUrl}/mail/messages/by-uid?accountId=${accountId}&folder=${encodeURIComponent(folder)}&uid=${uid}`).subscribe({
       next: (r) => {
@@ -148,6 +159,39 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
       this.resizeIframe();
       this.needsResize = false;
     }
+  }
+
+  reply(): void {
+    const m = this.message();
+    if (!m) return;
+    this.composeDialog.open({
+      mode: 'reply', accountId: this.accountId, messageId: m.id,
+      to: [m.fromAddress], subject: m.subject?.startsWith('Re: ') ? m.subject : `Re: ${m.subject ?? ''}`,
+      quotedHtml: m.bodyHtml ?? m.bodyText ?? '',
+    });
+  }
+
+  replyAll(): void {
+    const m = this.message();
+    if (!m) return;
+    const allTo = [m.fromAddress, ...(m.toAddresses ?? []).map((a) => a.address)];
+    const allCc = (m.ccAddresses ?? []).map((a) => a.address);
+    this.composeDialog.open({
+      mode: 'replyAll', accountId: this.accountId, messageId: m.id,
+      to: [...new Set(allTo)], cc: [...new Set(allCc)],
+      subject: m.subject?.startsWith('Re: ') ? m.subject : `Re: ${m.subject ?? ''}`,
+      quotedHtml: m.bodyHtml ?? m.bodyText ?? '',
+    });
+  }
+
+  forward(): void {
+    const m = this.message();
+    if (!m) return;
+    this.composeDialog.open({
+      mode: 'forward', accountId: this.accountId, messageId: m.id,
+      subject: m.subject?.startsWith('Fwd: ') ? m.subject : `Fwd: ${m.subject ?? ''}`,
+      quotedHtml: m.bodyHtml ?? m.bodyText ?? '',
+    });
   }
 
   goBack(): void { this.router.navigate(['/mail/inbox']); }

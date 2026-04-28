@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
@@ -10,6 +10,7 @@ import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
 import { environment } from '../../../environments/environment';
+import { MailComposeComponent, type ComposeData } from './mail-compose.component';
 
 interface MailAccount { id: string; label: string; emailAddress: string; }
 interface FolderInfo { path: string; name: string; messagesCount: number; unseenCount: number; specialUse: string | null; }
@@ -23,7 +24,7 @@ interface MessageRow {
 @Component({
   selector: 'app-mail-inbox',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, TableModule, TagModule, SelectModule, ToastModule],
+  imports: [CommonModule, FormsModule, ButtonModule, TableModule, TagModule, SelectModule, ToastModule, MailComposeComponent],
   providers: [MessageService],
   template: `
     <p-toast />
@@ -34,6 +35,7 @@ interface MessageRow {
           @if (accounts().length > 0) {
             <p-select [(ngModel)]="selectedAccountId" [options]="accounts()" optionLabel="label" optionValue="id" (onChange)="onAccountChange()" class="w-56" />
           }
+          <p-button label="Compose" icon="pi pi-pencil" (onClick)="openCompose()" />
           <p-button icon="pi pi-refresh" [outlined]="true" (onClick)="refreshMessages()" [loading]="loadingMessages()" />
           <p-button label="Settings" icon="pi pi-cog" severity="secondary" [outlined]="true" (onClick)="router.navigate(['/mail/settings'])" />
         </div>
@@ -126,12 +128,14 @@ interface MessageRow {
         </div>
       }
     </div>
+    <app-mail-compose #composeDialog />
   `,
 })
 export class MailInboxComponent implements OnInit {
   readonly router = inject(Router);
   private readonly http = inject(HttpClient);
   private readonly msg = inject(MessageService);
+  @ViewChild('composeDialog') composeDialog!: MailComposeComponent;
 
   accounts = signal<MailAccount[]>([]);
   folders = signal<FolderInfo[]>([]);
@@ -228,6 +232,11 @@ export class MailInboxComponent implements OnInit {
     this.router.navigate(['/mail/message', this.selectedAccountId], {
       queryParams: { folder: this.selectedFolder, uid: m.uid },
     });
+  }
+
+  openCompose(): void {
+    if (!this.selectedAccountId) return;
+    this.composeDialog.open({ mode: 'compose', accountId: this.selectedAccountId });
   }
 
   folderIcon(f: FolderInfo): string {

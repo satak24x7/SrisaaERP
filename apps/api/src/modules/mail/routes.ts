@@ -7,6 +7,7 @@ import { prisma, newId } from '../../lib/prisma.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
 import { errors } from '../../middleware/error-handler.js';
 import * as imapService from './imap.service.js';
+import * as smtpService from './smtp.service.js';
 
 function actorId(req: import('express').Request): string {
   const raw = req.user?.id ?? 'usr_anonymous';
@@ -356,4 +357,137 @@ mailRouter.get('/messages/:id/attachment/:idx', validate({ params: AttachParams 
   res.setHeader('Content-Type', att.contentType);
   res.setHeader('Content-Disposition', `attachment; filename="${att.filename}"`);
   res.send(att.content);
+}));
+
+// ===== Phase 2: Compose / Reply / Forward =====
+
+const SendMailBody = z.object({
+  to: z.array(z.string().email()).min(1),
+  cc: z.array(z.string().email()).optional(),
+  bcc: z.array(z.string().email()).optional(),
+  subject: z.string().max(1000),
+  html: z.string(),
+});
+
+/* POST /accounts/:id/send — compose and send new email */
+mailRouter.post('/accounts/:id/send', validate({ params: IdParams, body: SendMailBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
+  if (!account) throw errors.notFound('Mail account not found');
+
+  const body = req.body as z.infer<typeof SendMailBody>;
+  const result = await smtpService.sendMail(
+    account as unknown as Parameters<typeof smtpService.sendMail>[0],
+    { to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, html: body.html },
+  );
+
+  // Cache sent message locally
+  await prisma.mailMessage.create({
+    data: {
+      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: 0,
+      messageId: result.messageId, fromAddress: account.emailAddress, fromName: null,
+      toAddresses: body.to.map((a) => ({ address: a, name: null })),
+      ccAddresses: body.cc?.map((a) => ({ address: a, name: null })),
+      subject: body.subject, bodyHtml: body.html,
+      snippet: body.html.replace(/<[^>]*>/g, '').slice(0, 500),
+      isRead: true, sentAt: new Date(),
+    },
+  });
+
+  res.json({ data: { messageId: result.messageId } });
+}));
+
+const ReplyBody = z.object({
+  html: z.string(),
+  to: z.array(z.string().email()).optional(),
+  cc: z.array(z.string().email()).optional(),
+  replyAll: z.boolean().default(false),
+});
+
+/* POST /messages/:id/reply — reply to a message */
+mailRouter.post('/messages/:id/reply', validate({ params: MsgIdParams, body: ReplyBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const msg = await prisma.mailMessage.findFirst({
+    where: { id: req.params.id as string },
+    include: { mailAccount: true },
+  });
+  if (!msg || msg.mailAccount.userId !== userId) throw errors.notFound('Message not found');
+
+  const body = req.body as z.infer<typeof ReplyBody>;
+  const account = msg.mailAccount;
+
+  // Build recipients
+  let toAddrs = body.to ?? [msg.fromAddress];
+  let ccAddrs = body.cc ?? [];
+  if (body.replyAll) {
+    const origTo = (msg.toAddresses as Array<{ address: string }>).map((a) => a.address).filter((a) => a !== account.emailAddress);
+    const origCc = (msg.ccAddresses as Array<{ address: string }> | null)?.map((a) => a.address).filter((a) => a !== account.emailAddress) ?? [];
+    toAddrs = [msg.fromAddress, ...origTo];
+    ccAddrs = [...origCc, ...ccAddrs];
+  }
+  // Deduplicate
+  toAddrs = [...new Set(toAddrs)];
+  ccAddrs = [...new Set(ccAddrs.filter((a) => !toAddrs.includes(a)))];
+
+  const subject = msg.subject?.startsWith('Re: ') ? msg.subject : `Re: ${msg.subject ?? ''}`;
+
+  const result = await smtpService.sendMail(
+    account as unknown as Parameters<typeof smtpService.sendMail>[0],
+    { to: toAddrs, cc: ccAddrs, subject, html: body.html, inReplyTo: msg.messageId ?? undefined, references: msg.messageId ?? undefined },
+  );
+
+  // Cache sent reply
+  await prisma.mailMessage.create({
+    data: {
+      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: 0,
+      messageId: result.messageId, inReplyTo: msg.messageId,
+      fromAddress: account.emailAddress, fromName: null,
+      toAddresses: toAddrs.map((a) => ({ address: a, name: null })),
+      ccAddresses: ccAddrs.length ? ccAddrs.map((a) => ({ address: a, name: null })) : undefined,
+      subject, bodyHtml: body.html,
+      snippet: body.html.replace(/<[^>]*>/g, '').slice(0, 500),
+      isRead: true, sentAt: new Date(),
+    },
+  });
+
+  res.json({ data: { messageId: result.messageId } });
+}));
+
+const ForwardBody = z.object({
+  to: z.array(z.string().email()).min(1),
+  cc: z.array(z.string().email()).optional(),
+  html: z.string(),
+});
+
+/* POST /messages/:id/forward — forward a message */
+mailRouter.post('/messages/:id/forward', validate({ params: MsgIdParams, body: ForwardBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const msg = await prisma.mailMessage.findFirst({
+    where: { id: req.params.id as string },
+    include: { mailAccount: true },
+  });
+  if (!msg || msg.mailAccount.userId !== userId) throw errors.notFound('Message not found');
+
+  const body = req.body as z.infer<typeof ForwardBody>;
+  const account = msg.mailAccount;
+  const subject = msg.subject?.startsWith('Fwd: ') ? msg.subject : `Fwd: ${msg.subject ?? ''}`;
+
+  const result = await smtpService.sendMail(
+    account as unknown as Parameters<typeof smtpService.sendMail>[0],
+    { to: body.to, cc: body.cc, subject, html: body.html },
+  );
+
+  await prisma.mailMessage.create({
+    data: {
+      id: newId(), mailAccountId: account.id, folder: 'Sent', uid: 0,
+      messageId: result.messageId, fromAddress: account.emailAddress, fromName: null,
+      toAddresses: body.to.map((a) => ({ address: a, name: null })),
+      ccAddresses: body.cc?.map((a) => ({ address: a, name: null })),
+      subject, bodyHtml: body.html,
+      snippet: body.html.replace(/<[^>]*>/g, '').slice(0, 500),
+      isRead: true, sentAt: new Date(),
+    },
+  });
+
+  res.json({ data: { messageId: result.messageId } });
 }));
