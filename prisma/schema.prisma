@@ -247,6 +247,7 @@ model User {
   passwordEntries      PasswordEntry[]        @relation("PasswordOwner")
   ownedInitiatives     Initiative[]           @relation("InitiativeOwner")
   expenseSheets        ExpenseSheet[]         @relation("ExpenseClaimant")
+  mailAccounts         MailAccount[]          @relation("MailAccountOwner")
   ownedTasks           Task[]                 @relation("TaskOwner")
   effortLogs           TaskEffortLog[]        @relation("EffortLogger")
   ownedRisks           Risk[]                 @relation("RiskOwner")
@@ -1853,4 +1854,94 @@ model Notification {
   @@index([userId, isRead])
   @@index([userId, createdAt])
   @@map("notification")
+}
+
+// ==========================================================================
+// Mail Integration
+// ==========================================================================
+
+model MailAccount {
+  id            String  @id @db.VarChar(26)
+  userId        String  @map("user_id") @db.VarChar(26)
+  label         String  @db.VarChar(128)
+  emailAddress  String  @map("email_address") @db.VarChar(255)
+
+  imapHost      String  @map("imap_host") @db.VarChar(255)
+  imapPort      Int     @map("imap_port")
+  imapSsl       Boolean @default(true) @map("imap_ssl")
+
+  smtpHost      String  @map("smtp_host") @db.VarChar(255)
+  smtpPort      Int     @map("smtp_port")
+  smtpSsl       Boolean @default(true) @map("smtp_ssl")
+
+  encryptedPass String  @map("encrypted_pass") @db.Text
+  passIv        String  @map("pass_iv") @db.VarChar(32)
+  passTag       String  @map("pass_tag") @db.VarChar(32)
+
+  isActive      Boolean  @default(true) @map("is_active")
+  lastSyncAt    DateTime? @map("last_sync_at")
+  lastSyncError String?  @map("last_sync_error") @db.VarChar(1000)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  user     User          @relation("MailAccountOwner", fields: [userId], references: [id])
+  messages MailMessage[]
+
+  @@unique([userId, emailAddress])
+  @@index([userId, deletedAt])
+  @@map("mail_account")
+}
+
+model MailMessage {
+  id              String   @id @db.VarChar(26)
+  mailAccountId   String   @map("mail_account_id") @db.VarChar(26)
+  folder          String   @db.VarChar(255)
+  uid             Int
+  messageId       String?  @map("message_id") @db.VarChar(512)
+  inReplyTo       String?  @map("in_reply_to") @db.VarChar(512)
+
+  fromAddress     String   @map("from_address") @db.VarChar(255)
+  fromName        String?  @map("from_name") @db.VarChar(255)
+  toAddresses     Json     @map("to_addresses")
+  ccAddresses     Json?    @map("cc_addresses")
+  subject         String?  @db.VarChar(1000)
+  snippet         String?  @db.VarChar(500)
+  bodyHtml        String?  @map("body_html") @db.LongText
+  bodyText        String?  @map("body_text") @db.LongText
+  hasAttachments  Boolean  @default(false) @map("has_attachments")
+  attachments     Json?
+
+  isRead          Boolean  @default(false) @map("is_read")
+  isFlagged       Boolean  @default(false) @map("is_flagged")
+  sentAt          DateTime @map("sent_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  mailAccount  MailAccount     @relation(fields: [mailAccountId], references: [id], onDelete: Cascade)
+  entityLinks  MailEntityLink[]
+
+  @@unique([mailAccountId, folder, uid])
+  @@index([mailAccountId, folder, sentAt])
+  @@index([messageId])
+  @@map("mail_message")
+}
+
+model MailEntityLink {
+  id            String @id @db.VarChar(26)
+  mailMessageId String @map("mail_message_id") @db.VarChar(26)
+  entityType    String @map("entity_type") @db.VarChar(32)
+  entityId      String @map("entity_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy String   @map("created_by") @db.VarChar(26)
+
+  mailMessage MailMessage @relation(fields: [mailMessageId], references: [id], onDelete: Cascade)
+
+  @@unique([mailMessageId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("mail_entity_link")
 }

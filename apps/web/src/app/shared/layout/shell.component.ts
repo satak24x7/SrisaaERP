@@ -212,6 +212,7 @@ export class ShellComponent implements OnInit, OnDestroy {
         { label: 'Activities', icon: 'pi pi-list', route: '/work-area/activities' },
         { label: 'Travels', icon: 'pi pi-car', route: '/work-area/travels' },
         { label: 'Expenses', icon: 'pi pi-receipt', route: '/work-area/expense-sheets' },
+        { label: 'Mail', icon: 'pi pi-envelope', route: '/mail/inbox' },
         { label: 'Passwords', icon: 'pi pi-lock', route: '/work-area/passwords' },
       ],
     },
@@ -274,6 +275,7 @@ export class ShellComponent implements OnInit, OnDestroy {
         { label: 'Roles', icon: 'pi pi-shield', route: '/admin/roles' },
         { label: 'Configuration', icon: 'pi pi-cog', route: '/admin/configuration' },
         { label: 'Mobile Usage', icon: 'pi pi-mobile', route: '/admin/mobile-usage' },
+        { label: 'Mail Settings', icon: 'pi pi-envelope', route: '/mail/settings' },
       ],
     },
   ];

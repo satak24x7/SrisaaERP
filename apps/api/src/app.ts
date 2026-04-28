@@ -38,6 +38,7 @@ import { notificationRouter } from './modules/notification/routes.js';
 import { tenderListRouter } from './modules/tender/routes.js';
 import { finTravelExpensesRouter } from './modules/finance/travel-expenses.routes.js';
 import { expenseSheetRouter } from './modules/expense-sheet/routes.js';
+import { mailRouter } from './modules/mail/routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -127,6 +128,9 @@ export function createApp(): Express {
 
   // Expense Sheets
   app.use('/api/v1/expense-sheets', expenseSheetRouter);
+
+  // Mail
+  app.use('/api/v1/mail', mailRouter);
 
   // Finance
   app.use('/api/v1/finance/travel-expenses', finTravelExpensesRouter);
