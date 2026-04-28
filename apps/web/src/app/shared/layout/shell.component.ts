@@ -208,11 +208,11 @@ export class ShellComponent implements OnInit, OnDestroy {
       icon: 'pi pi-briefcase',
       expanded: true,
       children: [
+        { label: 'Message Center', icon: 'pi pi-envelope', route: '/mail/inbox' },
         { label: 'Calendar', icon: 'pi pi-calendar', route: '/work-area/calendar' },
         { label: 'Activities', icon: 'pi pi-list', route: '/work-area/activities' },
         { label: 'Travels', icon: 'pi pi-car', route: '/work-area/travels' },
         { label: 'Expenses', icon: 'pi pi-receipt', route: '/work-area/expense-sheets' },
-        { label: 'Mail', icon: 'pi pi-envelope', route: '/mail/inbox' },
         { label: 'Passwords', icon: 'pi pi-lock', route: '/work-area/passwords' },
       ],
     },

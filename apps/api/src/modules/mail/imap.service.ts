@@ -247,18 +247,17 @@ export async function searchMessages(
     await client.connect();
     const lock = await client.getMailboxLock(folder);
     try {
-      // IMAP OR search across subject, from, to, cc, body
-      const searchCriteria = {
-        or: [
-          { subject: query },
-          { from: query },
-          { to: query },
-          { cc: query },
-          { body: query },
-        ],
-      };
-
-      const uids = await client.search(searchCriteria, { uid: true });
+      // Search subject first (most common), then merge from/to/cc results
+      // ImapFlow's OR syntax is unreliable, so we run separate searches and merge
+      const uidSets: number[][] = [];
+      for (const field of ['subject', 'from', 'to', 'cc'] as const) {
+        try {
+          const result = await client.search({ [field]: query }, { uid: true });
+          if (result.length) uidSets.push(result);
+        } catch { /* some servers don't support all search fields */ }
+      }
+      // Merge and deduplicate
+      const uids = [...new Set(uidSets.flat())];
       const total = uids.length;
 
       if (total === 0) {
