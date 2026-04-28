@@ -89,6 +89,8 @@ const TASK_STATUSES = [
               @if (a.activityType === 'EVENT') {
                 {{ a.startDateTime | date:'short' }}
                 @if (a.isAllDay) { <span class="text-xs text-gray-400">(All day)</span> }
+              } @else if (a.activityType === 'EMAIL') {
+                {{ a.startDateTime | date:'short' }}
               } @else {
                 {{ a.dueDateTime | date:'short' }}
               }
@@ -96,6 +98,8 @@ const TASK_STATUSES = [
             <td>
               @if (a.activityType === 'TASK' && a.taskStatus) {
                 <p-tag [value]="a.taskStatus" [severity]="taskStatusSeverity(a.taskStatus)" [style]="{'font-size':'0.7rem'}" />
+              } @else if (a.activityType === 'EMAIL') {
+                <p-tag [value]="emailDirection(a)" [severity]="emailDirection(a) === 'Sent' ? 'info' : 'success'" [style]="{'font-size':'0.7rem'}" />
               } @else {
                 <span class="text-xs text-gray-400">-</span>
               }
@@ -274,7 +278,7 @@ export class ActivityPanelComponent implements OnInit {
           categoryCode: 'email',
           userId: '', userName: e.message.fromName || e.message.fromAddress,
           startDateTime: e.message.sentAt, endDateTime: null, isAllDay: false,
-          dueDateTime: null, taskStatus: null,
+          dueDateTime: null, taskStatus: e.message.folder,
           associations: [], contacts: [],
           createdAt: e.message.sentAt, updatedAt: e.message.sentAt,
         }));
@@ -385,6 +389,11 @@ export class ActivityPanelComponent implements OnInit {
   typeIcon(type: string): string {
     if (type === 'EMAIL') return 'pi pi-envelope';
     return type === 'EVENT' ? 'pi pi-calendar' : 'pi pi-check-square';
+  }
+
+  emailDirection(a: Activity): string {
+    const folder = (a.taskStatus ?? '').toLowerCase();
+    return folder === 'sent' ? 'Sent' : 'Received';
   }
 
   typeSeverity(type: string): 'info' | 'warn' | 'success' | 'secondary' {
