@@ -100,41 +100,41 @@ const ENTITY_TYPES = [
     <!-- Detail Dialog (view existing) -->
     <p-dialog header="Activity Details" [(visible)]="detailVisible" [modal]="true" [style]="{width:'550px'}">
       @if (detailLoading) {
-        <div class="flex items-center gap-2 text-gray-500 py-6 justify-center"><i class="pi pi-spin pi-spinner"></i> Loading...</div>
+        <div class="flex items-center gap-2 py-6 justify-center"><i class="pi pi-spin pi-spinner"></i> Loading...</div>
       } @else if (selectedActivity()) {
         <div class="flex flex-col gap-4 pt-2">
           <!-- Header: Type + Category + Status -->
           <div class="flex items-center gap-2 flex-wrap">
             <p-tag [value]="selectedActivity()!.activityType" [severity]="selectedActivity()!.activityType === 'EVENT' ? 'info' : 'warn'" />
-            <span class="text-sm bg-gray-100 rounded px-2 py-0.5">{{ selectedActivity()!.categoryCode }}</span>
+            <p-tag [value]="selectedActivity()!.categoryCode" severity="secondary" />
             @if (selectedActivity()!.activityType === 'TASK' && selectedActivity()!.taskStatus) {
               <p-tag [value]="selectedActivity()!.taskStatus!" [severity]="taskSeverity(selectedActivity()!.taskStatus!)" />
             }
           </div>
 
           <!-- Subject -->
-          <h3 class="text-xl font-semibold text-gray-800">{{ selectedActivity()!.subject }}</h3>
+          <h3 class="text-xl font-semibold">{{ selectedActivity()!.subject }}</h3>
 
           <!-- Description -->
           @if (selectedActivity()!.description) {
-            <p class="text-sm text-gray-600 whitespace-pre-wrap">{{ selectedActivity()!.description }}</p>
+            <p class="text-sm opacity-80 whitespace-pre-wrap">{{ selectedActivity()!.description }}</p>
           }
 
           <!-- Date/Time -->
-          <div class="grid grid-cols-2 gap-4 bg-gray-50 rounded-lg p-3">
+          <div class="grid grid-cols-2 gap-4 rounded-lg p-3 border border-gray-600">
             @if (selectedActivity()!.activityType === 'EVENT') {
               <div>
-                <div class="text-xs text-gray-500 font-medium mb-1">Start</div>
+                <div class="text-xs opacity-60 font-medium mb-1">Start</div>
                 <div class="text-sm font-medium">
                   @if (selectedActivity()!.isAllDay) {
-                    {{ selectedActivity()!.startDateTime | date:'mediumDate' }} <span class="text-gray-400">(All day)</span>
+                    {{ selectedActivity()!.startDateTime | date:'mediumDate' }} <span class="opacity-50">(All day)</span>
                   } @else {
                     {{ selectedActivity()!.startDateTime | date:'medium' }}
                   }
                 </div>
               </div>
               <div>
-                <div class="text-xs text-gray-500 font-medium mb-1">End</div>
+                <div class="text-xs opacity-60 font-medium mb-1">End</div>
                 <div class="text-sm font-medium">
                   @if (selectedActivity()!.isAllDay) {
                     {{ selectedActivity()!.endDateTime | date:'mediumDate' }}
@@ -145,11 +145,11 @@ const ENTITY_TYPES = [
               </div>
             } @else {
               <div>
-                <div class="text-xs text-gray-500 font-medium mb-1">Due Date</div>
+                <div class="text-xs opacity-60 font-medium mb-1">Due Date</div>
                 <div class="text-sm font-medium">{{ selectedActivity()!.dueDateTime | date:'medium' }}</div>
               </div>
               <div>
-                <div class="text-xs text-gray-500 font-medium mb-1">Status</div>
+                <div class="text-xs opacity-60 font-medium mb-1">Status</div>
                 <div><p-tag [value]="selectedActivity()!.taskStatus ?? 'OPEN'" [severity]="taskSeverity(selectedActivity()!.taskStatus ?? 'OPEN')" /></div>
               </div>
             }
@@ -157,18 +157,18 @@ const ENTITY_TYPES = [
 
           <!-- Owner -->
           <div class="flex items-center gap-2 text-sm">
-            <i class="pi pi-user text-gray-400"></i>
-            <span class="text-gray-500">Assigned to:</span>
+            <i class="pi pi-user opacity-50"></i>
+            <span class="opacity-60">Assigned to:</span>
             <span class="font-medium">{{ selectedActivity()!.userName || 'Unassigned' }}</span>
           </div>
 
           <!-- Contacts -->
           @if (selectedActivity()!.contacts.length > 0) {
             <div>
-              <div class="text-xs text-gray-500 font-medium mb-2"><i class="pi pi-users mr-1"></i> Contacts</div>
+              <div class="text-xs opacity-60 font-medium mb-2"><i class="pi pi-users mr-1"></i> Contacts</div>
               <div class="flex flex-wrap gap-2">
                 @for (c of selectedActivity()!.contacts; track c.id) {
-                  <span class="text-xs bg-blue-50 border border-blue-200 rounded-full px-3 py-1 text-blue-700">{{ c.name }}</span>
+                  <p-tag [value]="c.name" severity="info" />
                 }
               </div>
             </div>
@@ -177,12 +177,12 @@ const ENTITY_TYPES = [
           <!-- Associated Objects -->
           @if (selectedActivity()!.associations.length > 0) {
             <div>
-              <div class="text-xs text-gray-500 font-medium mb-2"><i class="pi pi-link mr-1"></i> Linked Objects</div>
+              <div class="text-xs opacity-60 font-medium mb-2"><i class="pi pi-link mr-1"></i> Linked Objects</div>
               <div class="flex flex-col gap-1">
                 @for (a of selectedActivity()!.associations; track a.id) {
-                  <div class="flex items-center gap-2 bg-gray-50 rounded px-3 py-2 text-sm">
-                    <span class="text-xs bg-gray-200 rounded px-2 py-0.5 font-medium text-gray-600">{{ entityLabel(a.entityType) }}</span>
-                    <span class="text-gray-800">{{ a.entityName || a.entityId }}</span>
+                  <div class="flex items-center gap-2 rounded px-3 py-2 text-sm border border-gray-600">
+                    <p-tag [value]="entityLabel(a.entityType)" severity="secondary" />
+                    <span>{{ a.entityName || a.entityId }}</span>
                   </div>
                 }
               </div>
@@ -190,7 +190,7 @@ const ENTITY_TYPES = [
           }
 
           <!-- Timestamps -->
-          <div class="text-xs text-gray-400 border-t pt-2 flex gap-4">
+          <div class="text-xs opacity-40 border-t border-gray-600 pt-2 flex gap-4">
             <span>Created: {{ selectedActivity()!.createdAt | date:'medium' }}</span>
             <span>Updated: {{ selectedActivity()!.updatedAt | date:'medium' }}</span>
           </div>
