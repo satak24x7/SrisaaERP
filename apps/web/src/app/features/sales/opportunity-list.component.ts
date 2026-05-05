@@ -19,6 +19,7 @@ interface Opportunity {
   id: string; title: string; stage: string; entryPath: string; closedStatus: string | null;
   contractValuePaise: number | null; accountName: string | null;
   endClientName: string | null; businessUnitName: string | null;
+  expectedCloseMonth: string | null;
   influencers: InfluencerRef[]; createdAt: string;
 }
 interface SelectOption { id: string; name: string; }
@@ -72,6 +73,7 @@ interface SelectOption { id: string; name: string; }
               <th class="font-semibold">BU</th>
               <th class="font-semibold">Value</th>
               <th class="font-semibold">Stage</th>
+              <th class="font-semibold">Close Month</th>
               @if (filterOpenStatus !== 'open') {
                 <th class="font-semibold">Closed</th>
               }
@@ -87,6 +89,13 @@ interface SelectOption { id: string; name: string; }
               <td><span class="text-sm">{{ o.businessUnitName || '—' }}</span></td>
               <td><span class="text-sm">{{ o.contractValuePaise ? '₹' + (o.contractValuePaise / 100 | number:'1.0-0') : '—' }}</span></td>
               <td><p-tag [value]="formatStage(o.stage)" [severity]="stageSeverity(o.stage)" [style]="{'font-size':'0.7rem'}" /></td>
+              <td>
+                @if (o.expectedCloseMonth) {
+                  <span class="text-sm font-medium" [class]="closeMonthClass(o.expectedCloseMonth)">{{ formatCloseMonth(o.expectedCloseMonth) }}</span>
+                } @else {
+                  <span class="text-gray-400">—</span>
+                }
+              </td>
               @if (filterOpenStatus !== 'open') {
                 <td>
                   @if (o.closedStatus) {
@@ -109,7 +118,7 @@ interface SelectOption { id: string; name: string; }
             </tr>
           </ng-template>
           <ng-template pTemplate="emptymessage">
-            <tr><td [attr.colspan]="filterOpenStatus !== 'open' ? 9 : 8" class="text-center py-8 text-gray-500">No opportunities found.</td></tr>
+            <tr><td [attr.colspan]="filterOpenStatus !== 'open' ? 10 : 9" class="text-center py-8 text-gray-500">No opportunities found.</td></tr>
           </ng-template>
         </p-table>
       </div>
@@ -230,6 +239,24 @@ export class OpportunityListComponent implements OnInit {
   }
   closedSeverity(s: string): 'success' | 'info' | 'warn' | 'danger' {
     switch (s) { case 'WON': return 'success'; case 'LOST': return 'danger'; case 'CANCELLED': return 'danger'; case 'ON_HOLD': return 'warn'; default: return 'info'; }
+  }
+
+  formatCloseMonth(m: string): string {
+    const [y, mon] = m.split('-');
+    return new Date(Number(y), Number(mon) - 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  }
+
+  closeMonthClass(m: string): string {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (m < currentMonth) return 'text-red-600';
+    if (m === currentMonth) return 'text-green-600';
+    // Check if same quarter
+    const [y, mon] = m.split('-').map(Number);
+    const mQ = Math.ceil(mon! / 3);
+    const nowQ = Math.ceil((now.getMonth() + 1) / 3);
+    if (y === now.getFullYear() && mQ === nowQ) return 'text-orange-500';
+    return '';
   }
 
   openDetail(o: Opportunity): void { this.ngRouter.navigate(['/sales/opportunities', o.id]); }

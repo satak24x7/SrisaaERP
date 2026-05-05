@@ -17,4 +17,9 @@ export const MAIL_ROUTES: Routes = [
     loadComponent: () =>
       import('./mail-settings.component').then((m) => m.MailSettingsComponent),
   },
+  {
+    path: 'oauth/complete',
+    loadComponent: () =>
+      import('./mail-oauth-callback.component').then((m) => m.MailOAuthCompleteComponent),
+  },
 ];

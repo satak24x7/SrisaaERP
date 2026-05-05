@@ -10,7 +10,9 @@ import { SelectModule } from 'primeng/select';
 import { ToastModule } from 'primeng/toast';
 import { MenuModule } from 'primeng/menu';
 import { InputTextModule } from 'primeng/inputtext';
-import { MessageService, type MenuItem } from 'primeng/api';
+import { DialogModule } from 'primeng/dialog';
+import { TreeModule } from 'primeng/tree';
+import { MessageService, type MenuItem, type TreeNode } from 'primeng/api';
 import { DomSanitizer, type SafeResourceUrl } from '@angular/platform-browser';
 import { environment } from '../../../environments/environment';
 import { MailComposeComponent, type ComposeData } from './mail-compose.component';
@@ -30,7 +32,7 @@ interface MailMessage {
 @Component({
   selector: 'app-mail-reader',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, TagModule, SelectModule, ToastModule, MenuModule, InputTextModule, MailComposeComponent],
+  imports: [CommonModule, FormsModule, ButtonModule, TagModule, SelectModule, ToastModule, MenuModule, InputTextModule, DialogModule, TreeModule, MailComposeComponent],
   providers: [MessageService],
   template: `
     <p-toast />
@@ -162,15 +164,15 @@ interface MailMessage {
             </h3>
             <div class="flex flex-wrap gap-3">
               @for (att of message()!.attachments; track att.index) {
-                <a class="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-300 cursor-pointer transition-colors text-sm"
-                  (click)="downloadAttachment(att)">
+                <div class="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded text-sm">
                   <i [class]="attachmentIcon(att.contentType)"></i>
-                  <div>
+                  <div class="cursor-pointer hover:underline" (click)="downloadAttachment(att)">
                     <div class="font-medium text-gray-700">{{ att.filename }}</div>
                     <div class="text-xs text-gray-400">{{ formatSize(att.size) }}</div>
                   </div>
-                  <i class="pi pi-download text-gray-400 ml-2"></i>
-                </a>
+                  <button class="text-gray-400 hover:text-blue-600 ml-2" title="Download" (click)="downloadAttachment(att)"><i class="pi pi-download"></i></button>
+                  <button class="text-gray-400 hover:text-green-600" title="Save to Documents" (click)="openSaveToDms(att)"><i class="pi pi-folder-plus"></i></button>
+                </div>
               }
             </div>
           </div>
@@ -208,6 +210,42 @@ interface MailMessage {
       }
     </div>
     <app-mail-compose #composeDialog />
+
+    <!-- Save to DMS Dialog -->
+    <p-dialog header="Save Attachment to Documents" [(visible)]="saveDmsVisible" [modal]="true" [style]="{width:'550px'}">
+      <div class="flex flex-col gap-4 pt-2">
+        <div>
+          <label class="text-sm font-medium block mb-1">File</label>
+          <div class="flex items-center gap-2 text-sm bg-gray-50 rounded p-2 border border-gray-200">
+            <i [class]="saveDmsAttachment ? attachmentIcon(saveDmsAttachment.contentType) : 'pi pi-file'"></i>
+            <span class="font-medium">{{ saveDmsAttachment?.filename }}</span>
+            <span class="text-gray-400">({{ saveDmsAttachment ? formatSize(saveDmsAttachment.size) : '' }})</span>
+          </div>
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Name</label>
+          <input pInputText [(ngModel)]="saveDmsName" class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Destination Folder *</label>
+          <div class="border border-gray-200 rounded max-h-60 overflow-auto">
+            <p-tree [value]="dmsFolderTree()" selectionMode="single" [(selection)]="saveDmsSelectedNode"
+              [filter]="true" filterPlaceholder="Search folders..." styleClass="border-0 p-0" />
+          </div>
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Link to Entity (optional)</label>
+          <div class="flex gap-2">
+            <p-select appendTo="body" [(ngModel)]="saveDmsEntityType" [options]="entityTypeOptions" optionLabel="label" optionValue="value" placeholder="Type" class="w-40" (onChange)="loadDmsEntityOptions()" />
+            <p-select appendTo="body" [(ngModel)]="saveDmsEntityId" [options]="saveDmsEntityOptions" optionLabel="name" optionValue="id" [filter]="true" placeholder="Search..." class="flex-1" />
+          </div>
+        </div>
+      </div>
+      <ng-template pTemplate="footer">
+        <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="saveDmsVisible = false" />
+        <p-button label="Save" icon="pi pi-check" [disabled]="!saveDmsSelectedNode" [loading]="saveDmsSaving" (onClick)="saveToDms()" />
+      </ng-template>
+    </p-dialog>
   `,
 })
 export class MailReaderComponent implements OnInit, AfterViewChecked {
@@ -238,6 +276,17 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
   draftPrompt = '';
   summarizing = false;
   drafting = false;
+
+  // Save to DMS
+  saveDmsVisible = false;
+  saveDmsAttachment: Attachment | null = null;
+  saveDmsName = '';
+  saveDmsSelectedNode: TreeNode | null = null;
+  saveDmsEntityType = '';
+  saveDmsEntityId = '';
+  saveDmsEntityOptions: Array<{ id: string; name: string }> = [];
+  saveDmsSaving = false;
+  dmsFolderTree = signal<TreeNode[]>([]);
 
   // Entity linking
   entityLinks: Array<{ id: string; entityType: string; entityId: string; entityName: string | null }> = [];
@@ -523,5 +572,96 @@ export class MailReaderComponent implements OnInit, AfterViewChecked {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // ===== Save to DMS =====
+
+  openSaveToDms(att: Attachment): void {
+    this.saveDmsAttachment = att;
+    this.saveDmsName = att.filename.replace(/\.[^.]+$/, '');
+    this.saveDmsSelectedNode = null;
+    this.saveDmsEntityType = '';
+    this.saveDmsEntityId = '';
+    this.saveDmsEntityOptions = [];
+    this.saveDmsVisible = true;
+    this.loadDmsFolders();
+  }
+
+  private loadDmsFolders(): void {
+    this.http.get<{ data: Array<{ id: string; name: string; parentId: string | null; scope: string }> }>(
+      `${environment.apiBaseUrl}/documents/folders`,
+    ).subscribe({
+      next: (r) => {
+        this.dmsFolderTree.set(this.buildFolderTree(r.data));
+      },
+    });
+  }
+
+  private buildFolderTree(folders: Array<{ id: string; name: string; parentId: string | null; scope: string }>): TreeNode[] {
+    const map = new Map<string, TreeNode>();
+    const roots: TreeNode[] = [];
+    for (const f of folders) {
+      map.set(f.id, {
+        key: f.id, label: f.name, data: f, children: [],
+        icon: 'pi pi-folder', expandedIcon: 'pi pi-folder-open', collapsedIcon: 'pi pi-folder',
+      });
+    }
+    for (const f of folders) {
+      const node = map.get(f.id)!;
+      if (f.parentId && map.has(f.parentId)) {
+        map.get(f.parentId)!.children!.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+    return roots;
+  }
+
+  loadDmsEntityOptions(): void {
+    this.saveDmsEntityId = '';
+    this.saveDmsEntityOptions = [];
+    if (!this.saveDmsEntityType) return;
+    let url = '';
+    switch (this.saveDmsEntityType) {
+      case 'OPPORTUNITY': url = `${environment.apiBaseUrl}/opportunities?limit=200&openStatus=all`; break;
+      case 'LEAD': url = `${environment.apiBaseUrl}/leads?limit=200`; break;
+      case 'ACCOUNT': url = `${environment.apiBaseUrl}/accounts?limit=200`; break;
+      case 'PROJECT': url = `${environment.apiBaseUrl}/projects?limit=200`; break;
+      case 'INITIATIVE': url = `${environment.apiBaseUrl}/initiatives?limit=200`; break;
+    }
+    if (!url) return;
+    this.http.get<{ data: Array<{ id: string; title?: string; name?: string }> }>(url).subscribe({
+      next: (r) => { this.saveDmsEntityOptions = r.data.map((e) => ({ id: e.id, name: e.title ?? e.name ?? e.id })); },
+    });
+  }
+
+  saveToDms(): void {
+    const msg = this.message();
+    if (!msg || !this.saveDmsAttachment || !this.saveDmsSelectedNode?.key) return;
+
+    this.saveDmsSaving = true;
+    const body: Record<string, string> = {
+      folderId: this.saveDmsSelectedNode.key as string,
+    };
+    if (this.saveDmsName.trim()) body['name'] = this.saveDmsName.trim();
+    if (this.saveDmsEntityType && this.saveDmsEntityId) {
+      body['entityType'] = this.saveDmsEntityType;
+      body['entityId'] = this.saveDmsEntityId;
+    }
+
+    this.http.post(
+      `${environment.apiBaseUrl}/mail/messages/${msg.id}/attachment/${this.saveDmsAttachment.index}/save-to-dms`,
+      body,
+    ).subscribe({
+      next: () => {
+        this.saveDmsSaving = false;
+        this.saveDmsVisible = false;
+        this.msg.add({ severity: 'success', summary: 'Saved', detail: `"${this.saveDmsAttachment!.filename}" saved to Documents` });
+      },
+      error: () => {
+        this.saveDmsSaving = false;
+        this.msg.add({ severity: 'error', summary: 'Failed to save attachment' });
+      },
+    });
   }
 }

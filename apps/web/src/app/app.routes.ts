@@ -51,6 +51,11 @@ export const routes: Routes = [
           import('./features/mail/mail.routes').then((m) => m.MAIL_ROUTES),
       },
       {
+        path: 'documents',
+        loadChildren: () =>
+          import('./features/documents/documents.routes').then((m) => m.documentRoutes),
+      },
+      {
         path: 'finance',
         loadChildren: () =>
           import('./features/finance/finance.routes').then((m) => m.FINANCE_ROUTES),
@@ -71,5 +76,10 @@ export const routes: Routes = [
     path: 'callback',
     loadComponent: () =>
       import('./core/auth/callback.component').then((m) => m.CallbackComponent),
+  },
+  {
+    path: 'mail/oauth/callback',
+    loadComponent: () =>
+      import('./features/mail/mail-oauth-callback.component').then((m) => m.MailOAuthCallbackComponent),
   },
 ];

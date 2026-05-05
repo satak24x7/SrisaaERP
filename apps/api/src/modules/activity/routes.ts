@@ -231,8 +231,8 @@ activityRouter.get(
         id: dto.id,
         title: dto.subject,
         start: dto.activityType === 'EVENT' ? dto.startDateTime : dto.dueDateTime,
-        end: dto.activityType === 'EVENT' ? dto.endDateTime : dto.dueDateTime,
-        allDay: dto.isAllDay,
+        end: dto.activityType === 'EVENT' ? dto.endDateTime : null,
+        allDay: dto.activityType === 'EVENT' ? dto.isAllDay : false,
         extendedProps: {
           activityType: dto.activityType,
           categoryCode: dto.categoryCode,
@@ -289,6 +289,63 @@ activityRouter.get(
     });
 
     res.json({ data: [...events, ...travelEvents] });
+  }),
+);
+
+/* GET /calendar-tasks — task panel data for calendar sidebar */
+activityRouter.get(
+  '/calendar-tasks',
+  validate({ query: CalendarQuery }),
+  asyncHandler(async (req, res) => {
+    const q = req.query as unknown as z.infer<typeof CalendarQuery>;
+    const startDate = new Date(q.start);
+    const endDate = new Date(q.end);
+
+    const userFilter: Record<string, unknown> = {};
+    if (q.mine === 'true') {
+      const myId = await resolveMyUserId(req);
+      if (myId) userFilter.userId = myId;
+    } else if (q.userId) {
+      userFilter.userId = q.userId;
+    }
+
+    // Overdue: open tasks with due date BEFORE view start
+    const overdueRows = await prisma.activity.findMany({
+      where: {
+        ...userFilter,
+        deletedAt: null,
+        activityType: 'TASK',
+        taskStatus: { in: ['OPEN', 'OVERDUE'] },
+        dueDateTime: { lt: startDate },
+      },
+      include: ACTIVITY_INCLUDE,
+      orderBy: { dueDateTime: 'asc' },
+      take: 200,
+    });
+
+    // Open tasks within view range (tasks only — no events)
+    const rangeRows = await prisma.activity.findMany({
+      where: {
+        ...userFilter,
+        deletedAt: null,
+        activityType: 'TASK',
+        taskStatus: { in: ['OPEN', 'OVERDUE'] },
+        dueDateTime: { gte: startDate, lte: endDate },
+      },
+      include: ACTIVITY_INCLUDE,
+      orderBy: { dueDateTime: 'asc' },
+      take: 500,
+    });
+
+    const allRows = [...overdueRows, ...rangeRows];
+    const entityNames = await resolveEntityNames(allRows as unknown as Array<{ associations?: Array<{ entityType: string; entityId: string }> }>);
+
+    res.json({
+      data: {
+        overdue: overdueRows.map((r) => activityToDto(r as unknown as Record<string, unknown>, entityNames)),
+        range: rangeRows.map((r) => activityToDto(r as unknown as Record<string, unknown>, entityNames)),
+      },
+    });
   }),
 );
 
@@ -349,7 +406,7 @@ activityRouter.get(
 
     const take = q.limit + 1;
     const args: Record<string, unknown> = {
-      where, orderBy: { createdAt: 'desc' }, take, include: ACTIVITY_INCLUDE,
+      where, orderBy: [{ startDateTime: 'asc' }, { dueDateTime: 'asc' }, { createdAt: 'asc' }], take, include: ACTIVITY_INCLUDE,
     };
     if (q.cursor) { args.cursor = { id: q.cursor }; args.skip = 1; }
 
@@ -450,16 +507,37 @@ activityRouter.patch(
     const data: Record<string, unknown> = { updatedBy: actor };
 
     const { associations, contactIds, ...fields } = body;
+    const dateChangeRecords: { field: string; oldValue: Date | null; newValue: Date | null }[] = [];
     for (const [k, v] of Object.entries(fields)) {
       if (v === undefined) continue;
       if (k === 'startDateTime' || k === 'endDateTime' || k === 'dueDateTime') {
-        data[k] = v ? new Date(v as string) : null;
+        const newVal = v ? new Date(v as string) : null;
+        const oldVal = existing[k as keyof typeof existing] as Date | null;
+        // Track date changes
+        if ((oldVal?.getTime() ?? null) !== (newVal?.getTime() ?? null)) {
+          dateChangeRecords.push({ field: k, oldValue: oldVal, newValue: newVal });
+        }
+        data[k] = newVal;
         continue;
       }
       data[k] = v;
     }
 
     await prisma.activity.update({ where: { id: existing.id }, data });
+
+    // Record date changes
+    if (dateChangeRecords.length > 0) {
+      await prisma.activityDateChange.createMany({
+        data: dateChangeRecords.map((r) => ({
+          id: newId(),
+          activityId: existing.id,
+          field: r.field,
+          oldValue: r.oldValue,
+          newValue: r.newValue,
+          changedBy: actor,
+        })),
+      });
+    }
 
     if (associations !== undefined) {
       await syncAssociations(existing.id, associations);
@@ -471,6 +549,39 @@ activityRouter.patch(
     const updated = await prisma.activity.findUniqueOrThrow({ where: { id: existing.id }, include: ACTIVITY_INCLUDE });
     await recordAudit(req, { action: 'UPDATE', resourceType: 'activity', resourceId: existing.id });
     res.json({ data: activityToDto(updated as unknown as Record<string, unknown>) });
+  }),
+);
+
+/* GET /:id/date-changes — date change history */
+activityRouter.get(
+  '/:id/date-changes',
+  validate({ params: IdParams }),
+  asyncHandler(async (req, res) => {
+    const existing = await prisma.activity.findFirst({ where: { id: req.params.id as string, deletedAt: null } });
+    if (!existing) throw errors.notFound('Activity not found');
+
+    const changes = await prisma.activityDateChange.findMany({
+      where: { activityId: existing.id },
+      orderBy: { changedAt: 'desc' },
+    });
+
+    // Resolve user names
+    const userIds = [...new Set(changes.map((c) => c.changedBy))];
+    const users = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, fullName: true } }) : [];
+    const userMap = Object.fromEntries(users.map((u) => [u.id, u.fullName]));
+
+    res.json({
+      data: changes.map((c) => ({
+        id: c.id,
+        field: c.field,
+        oldValue: c.oldValue?.toISOString() ?? null,
+        newValue: c.newValue?.toISOString() ?? null,
+        reason: c.reason,
+        changedBy: c.changedBy,
+        changedByName: userMap[c.changedBy] || c.changedBy,
+        changedAt: c.changedAt.toISOString(),
+      })),
+    });
   }),
 );
 

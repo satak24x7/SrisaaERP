@@ -36,6 +36,7 @@ interface Ref { id: string; name: string; }
 interface LookupItem { label: string; value: string; isActive?: boolean; }
 interface ContactRef { id: string; name: string; }
 interface Association { id: string; entityType: string; entityId: string; entityName: string | null; }
+interface DateChange { id: string; field: string; oldValue: string | null; newValue: string | null; reason: string | null; changedBy: string; changedByName: string; changedAt: string; }
 interface FullActivity {
   id: string; activityType: string; subject: string; description: string | null;
   categoryCode: string; userId: string; userName: string | null;
@@ -43,6 +44,13 @@ interface FullActivity {
   dueDateTime: string | null; taskStatus: string | null;
   associations: Association[]; contacts: ContactRef[];
   createdAt: string; updatedAt: string;
+}
+
+interface TaskGroup {
+  label: string;
+  key: string;
+  items: FullActivity[];
+  collapsed: boolean;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -79,7 +87,7 @@ const ENTITY_TYPES = [
   template: `
     <p-toast /><p-confirmDialog />
 
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center justify-between mb-4">
       <div>
         <h2 class="text-2xl font-semibold text-gray-800">Activity Calendar</h2>
         <p class="text-sm text-gray-500 mt-1">Click a date or drag to select a range to create an activity</p>
@@ -93,8 +101,105 @@ const ENTITY_TYPES = [
       </div>
     </div>
 
-    <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-      <full-calendar #calendar [options]="calendarOptions" />
+    <!-- 2/3 Calendar + 1/3 Task Panel -->
+    <div class="flex gap-4" style="min-height: calc(100vh - 160px)">
+      <!-- Calendar: 2/3 -->
+      <div class="flex-[2] bg-white rounded-lg shadow-sm border border-gray-200 p-4 min-w-0">
+        <full-calendar #calendar [options]="calendarOptions" />
+      </div>
+
+      <!-- Task Panel: 1/3 -->
+      <div class="flex-[1] bg-white rounded-lg shadow-sm border border-gray-200 flex flex-col min-w-[280px] max-w-[400px]">
+        <div class="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+          <h3 class="text-sm font-semibold text-gray-700">
+            <i class="pi pi-list-check mr-2"></i>Tasks
+          </h3>
+          <span class="text-xs text-gray-400">{{ taskPanelTotal() }} items</span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto">
+          @if (taskPanelLoading()) {
+            <div class="flex items-center justify-center py-10 text-gray-400">
+              <i class="pi pi-spin pi-spinner mr-2"></i> Loading...
+            </div>
+          } @else if (taskGroups().length === 0) {
+            <div class="flex flex-col items-center justify-center py-10 text-gray-400">
+              <i class="pi pi-check-circle text-3xl mb-2"></i>
+              <span class="text-sm">No open tasks in this period</span>
+            </div>
+          } @else {
+            @for (group of taskGroups(); track group.key) {
+              <div class="border-b border-gray-100 last:border-b-0">
+                <!-- Group header -->
+                <button
+                  (click)="group.collapsed = !group.collapsed"
+                  class="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold uppercase tracking-wider hover:bg-gray-50 transition-colors"
+                  [class.text-red-600]="group.key === 'overdue'"
+                  [class.bg-red-50]="group.key === 'overdue'"
+                  [class.text-gray-500]="group.key !== 'overdue'"
+                >
+                  <span class="flex items-center gap-2">
+                    <i class="pi text-[10px]" [class.pi-chevron-down]="!group.collapsed" [class.pi-chevron-right]="group.collapsed"></i>
+                    {{ group.label }}
+                  </span>
+                  <span class="bg-gray-200 text-gray-600 text-[10px] font-bold rounded-full px-1.5 py-0.5 min-w-[20px] text-center"
+                        [class.bg-red-200]="group.key === 'overdue'" [class.text-red-700]="group.key === 'overdue'">
+                    {{ group.items.length }}
+                  </span>
+                </button>
+
+                <!-- Items -->
+                @if (!group.collapsed) {
+                  <div class="pb-1">
+                    @for (item of group.items; track item.id) {
+                      <div
+                        (click)="openTaskDetail(item.id)"
+                        class="mx-2 mb-1 px-3 py-2 rounded-md hover:bg-gray-50 cursor-pointer transition-colors border border-transparent hover:border-gray-200"
+                      >
+                        <div class="flex items-start gap-2">
+                          <!-- Status indicator -->
+                          <div class="mt-0.5 shrink-0">
+                            <i class="pi pi-check-square text-xs"
+                               [class.text-red-500]="item.taskStatus === 'OVERDUE'"
+                               [class.text-amber-500]="item.taskStatus === 'OPEN'"
+                               [class.text-green-500]="item.taskStatus === 'CLOSED'"></i>
+                          </div>
+                          <div class="flex-1 min-w-0">
+                            <p class="text-sm font-medium text-gray-800 truncate" [class.line-through]="item.taskStatus === 'CLOSED'" [class.text-gray-400]="item.taskStatus === 'CLOSED'">{{ item.subject }}</p>
+                            <div class="flex items-center gap-2 mt-0.5">
+                              @if (item.dueDateTime) {
+                                <span class="text-[11px] text-gray-400">
+                                  {{ formatTaskTime(item.dueDateTime) }}
+                                </span>
+                              }
+                              @if (item.userName) {
+                                <span class="text-[11px] text-gray-400 truncate">
+                                  <i class="pi pi-user text-[9px] mr-0.5"></i>{{ item.userName }}
+                                </span>
+                              }
+                            </div>
+                            @if (item.associations.length > 0) {
+                              <div class="flex flex-wrap gap-1 mt-1">
+                                @for (a of item.associations; track a.id) {
+                                  <span class="text-[10px] bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 truncate max-w-[120px]">
+                                    {{ a.entityName || a.entityType }}
+                                  </span>
+                                }
+                              </div>
+                            }
+                          </div>
+                          <!-- Category color dot -->
+                          <div class="w-2 h-2 rounded-full shrink-0 mt-1.5" [style.background]="getCategoryColor(item.categoryCode)"></div>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            }
+          }
+        </div>
+      </div>
     </div>
 
     <!-- Detail Dialog (view existing) -->
@@ -283,10 +388,43 @@ const ENTITY_TYPES = [
         @if (formError) {
           <div class="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{{ formError }}</div>
         }
+
+        <!-- Date Change History -->
+        @if (editId && dateChanges().length > 0) {
+          <div class="mt-4 border-t pt-3">
+            <label class="text-sm font-medium text-gray-700 flex items-center gap-1 mb-2">
+              <i class="pi pi-history text-xs"></i> Date Change History
+            </label>
+            <div class="max-h-40 overflow-y-auto space-y-2">
+              @for (ch of dateChanges(); track ch.id) {
+                <div class="flex items-start gap-2 text-xs bg-gray-50 rounded p-2">
+                  <i class="pi pi-clock text-gray-400 mt-0.5"></i>
+                  <div class="flex-1">
+                    <span class="font-medium">{{ dateFieldLabel(ch.field) }}</span>
+                    changed from
+                    <span class="text-red-600">{{ ch.oldValue ? (ch.oldValue | date:'short') : '(none)' }}</span>
+                    to
+                    <span class="text-green-600">{{ ch.newValue ? (ch.newValue | date:'short') : '(none)' }}</span>
+                    <div class="text-gray-400 mt-0.5">by {{ ch.changedByName }} &middot; {{ ch.changedAt | date:'short' }}</div>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        }
       </form>
       <ng-template pTemplate="footer">
-        <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="formVisible=false" />
-        <p-button [label]="editId ? 'Update' : 'Create'" icon="pi pi-check" [disabled]="actForm.invalid" (onClick)="saveActivity()" />
+        <div class="flex justify-between w-full">
+          <div>
+            @if (editId && actForm.value.activityType === 'TASK' && actForm.value.taskStatus === 'CLOSED') {
+              <p-button label="Close & Add New" icon="pi pi-plus-circle" severity="success" [outlined]="true" [disabled]="actForm.invalid" (onClick)="closeAndAddNew()" />
+            }
+          </div>
+          <div class="flex gap-2">
+            <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="formVisible=false" />
+            <p-button [label]="editId ? 'Update' : 'Create'" icon="pi pi-check" [disabled]="actForm.invalid" (onClick)="saveActivity()" />
+          </div>
+        </div>
       </ng-template>
     </p-dialog>
   `,
@@ -303,11 +441,17 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
   detailVisible = false;
   detailLoading = false;
 
+  // Task panel
+  taskGroups = signal<TaskGroup[]>([]);
+  taskPanelLoading = signal(false);
+  taskPanelTotal = signal(0);
+
   // Form state
   formVisible = false;
   editId: string | null = null;
   formError = '';
   formAssociations: Array<{ entityType: string; entityId: string }> = [];
+  dateChanges = signal<DateChange[]>([]);
 
   // Options
   userOptions = signal<Ref[]>([]);
@@ -328,6 +472,7 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
 
   private currentStart = '';
   private currentEnd = '';
+  private currentViewType = 'dayGridMonth';
 
   actForm = this.fb.group({
     activityType: ['EVENT', Validators.required],
@@ -349,26 +494,19 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
     headerToolbar: {
       left: 'prev,next today',
       center: 'title',
-      right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
+      right: 'dayGridMonth,timeGridWeek,timeGridDay',
     },
     editable: false,
     selectable: true,
     selectMirror: true,
     eventClick: (info: EventClickArg) => {
       const evId = info.event.id;
-      // Travel plans have IDs prefixed with "travel_"
       if (evId.startsWith('travel_')) {
         const travelPlanId = evId.replace('travel_', '');
         this.router.navigate(['/work-area/travels', travelPlanId]);
         return;
       }
-      this.detailLoading = true;
-      this.selectedActivity.set(null);
-      this.detailVisible = true;
-      this.http.get<{ data: FullActivity }>(`${environment.apiBaseUrl}/activities/${evId}`).subscribe({
-        next: (r) => { this.selectedActivity.set(r.data); this.detailLoading = false; },
-        error: () => { this.detailLoading = false; },
-      });
+      this.openTaskDetail(evId);
     },
     dateClick: (info: DateClickArg) => {
       this.openCreateDialog(info.date, info.allDay);
@@ -379,12 +517,51 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
     datesSet: (arg) => {
       this.currentStart = arg.startStr;
       this.currentEnd = arg.endStr;
+      this.currentViewType = arg.view.type;
       if (this.viewReady) {
         this.loadEvents(arg.startStr, arg.endStr);
+        this.loadTaskPanel(arg.startStr, arg.endStr);
       }
     },
     eventColor: '#3B82F6',
     height: 'auto',
+    eventDidMount: (info) => {
+      const isTask = info.event.extendedProps['activityType'] === 'TASK';
+      const isClosed = info.event.extendedProps['taskStatus'] === 'CLOSED';
+
+      // Tasks in week/day view: render as compact milestone markers instead of 1-hour blocks
+      if (isTask && (info.view.type === 'timeGridWeek' || info.view.type === 'timeGridDay')) {
+        const el = info.el as HTMLElement;
+        const textColor = isClosed ? '#9CA3AF' : '#374151';
+        const accentColor = isClosed ? '#9CA3AF' : (info.event.backgroundColor || '#6B7280');
+        el.style.cssText = `min-height:0; height:22px; border-radius:4px; border-left:3px solid ${accentColor}; background-color:${isClosed ? '#F3F4F6' : '#F8FAFC'}; color:${textColor}; font-size:11px; padding:2px 6px; overflow:hidden; display:flex; align-items:center; border-right:none; border-top:none; border-bottom:none;`;
+        // Force text color on all inner elements (FullCalendar sets white by default)
+        el.querySelectorAll('.fc-event-main, .fc-event-title, .fc-event-title-container').forEach((child) => {
+          (child as HTMLElement).style.color = textColor;
+        });
+        // Remove the time label inside
+        const timeEl = el.querySelector('.fc-event-time');
+        if (timeEl) (timeEl as HTMLElement).style.display = 'none';
+        // Add a diamond marker before the title
+        const titleEl = el.querySelector('.fc-event-title');
+        if (titleEl && !(titleEl as HTMLElement).dataset['marked']) {
+          (titleEl as HTMLElement).dataset['marked'] = '1';
+          (titleEl as HTMLElement).insertAdjacentHTML('beforebegin', '<span style="margin-right:4px;font-size:8px;color:' + accentColor + '">◆</span>');
+        }
+      }
+
+      // Strikethrough for closed tasks (all views)
+      if (isClosed) {
+        const titleEl = info.el.querySelector('.fc-event-title, .fc-event-title-container, .fc-list-event-title');
+        if (titleEl) {
+          (titleEl as HTMLElement).style.textDecoration = 'line-through';
+          (titleEl as HTMLElement).style.opacity = '0.6';
+        } else {
+          info.el.style.textDecoration = 'line-through';
+          info.el.style.opacity = '0.6';
+        }
+      }
+    },
   };
 
   private viewReady = false;
@@ -395,9 +572,9 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
 
   ngAfterViewInit(): void {
     this.viewReady = true;
-    // If datesSet already fired before view was ready, load now
     if (this.currentStart && this.currentEnd) {
       this.loadEvents(this.currentStart, this.currentEnd);
+      this.loadTaskPanel(this.currentStart, this.currentEnd);
     }
   }
 
@@ -439,7 +616,6 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
       next: (r) => {
         const calApi = this.calendarComponent?.getApi();
         if (!calApi) return;
-        // Remove all existing events and add fresh ones
         calApi.removeAllEvents();
         r.data
           .filter((e) => e.start != null)
@@ -455,21 +631,139 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
             });
           });
       },
-      error: (err) => {
-        console.error('Calendar load error:', err);
-      },
     });
   }
 
-  private reloadEvents(): void {
+  private loadTaskPanel(start: string, end: string): void {
+    this.taskPanelLoading.set(true);
+    let url = `${environment.apiBaseUrl}/activities/calendar-tasks?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`;
+    if (this.showMine) url += '&mine=true';
+    this.http.get<{ data: { overdue: FullActivity[]; range: FullActivity[] } }>(url).subscribe({
+      next: (r) => {
+        const groups = this.buildTaskGroups(r.data.overdue, r.data.range, start, end);
+        this.taskGroups.set(groups);
+        this.taskPanelTotal.set(groups.reduce((sum, g) => sum + g.items.length, 0));
+        this.taskPanelLoading.set(false);
+      },
+      error: () => this.taskPanelLoading.set(false),
+    });
+  }
+
+  private buildTaskGroups(overdue: FullActivity[], range: FullActivity[], _startStr: string, _endStr: string): TaskGroup[] {
+    const groups: TaskGroup[] = [];
+
+    // Overdue
+    if (overdue.length > 0) {
+      groups.push({ label: 'Overdue', key: 'overdue', items: overdue, collapsed: false });
+    }
+
+    // Date boundaries
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+
+    // End of this week: next Sunday at 00:00 (week starts Monday)
+    const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon...
+    const daysUntilSunday = dayOfWeek === 0 ? 0 : 7 - dayOfWeek;
+    const endOfThisWeek = new Date(today);
+    endOfThisWeek.setDate(endOfThisWeek.getDate() + daysUntilSunday + 1); // Monday after this week
+
+    // End of next week: the Monday after next week
+    const endOfNextWeek = new Date(endOfThisWeek);
+    endOfNextWeek.setDate(endOfNextWeek.getDate() + 7);
+
+    // Buckets
+    const todayItems: FullActivity[] = [];
+    const tomorrowItems: FullActivity[] = [];
+    const thisWeekItems: FullActivity[] = [];
+    const nextWeekItems: FullActivity[] = [];
+    const plannedItems: FullActivity[] = [];
+
+    for (const item of range) {
+      const dateStr = item.activityType === 'TASK' ? item.dueDateTime : item.startDateTime;
+      if (!dateStr) continue;
+
+      const d = new Date(dateStr);
+      d.setHours(0, 0, 0, 0);
+
+      if (d.getTime() === today.getTime()) {
+        todayItems.push(item);
+      } else if (d.getTime() === tomorrow.getTime()) {
+        tomorrowItems.push(item);
+      } else if (d >= dayAfterTomorrow && d < endOfThisWeek) {
+        thisWeekItems.push(item);
+      } else if (d >= endOfThisWeek && d < endOfNextWeek) {
+        nextWeekItems.push(item);
+      } else if (d >= endOfNextWeek) {
+        plannedItems.push(item);
+      }
+      // Items before today but in range are already covered by overdue from API
+    }
+
+    if (todayItems.length > 0) {
+      groups.push({ label: 'Today', key: 'today', items: todayItems, collapsed: false });
+    }
+    if (tomorrowItems.length > 0) {
+      groups.push({ label: 'Tomorrow', key: 'tomorrow', items: tomorrowItems, collapsed: false });
+    }
+    if (thisWeekItems.length > 0) {
+      groups.push({ label: 'This Week', key: 'this-week', items: thisWeekItems, collapsed: false });
+    }
+    if (nextWeekItems.length > 0) {
+      groups.push({ label: 'Next Week', key: 'next-week', items: nextWeekItems, collapsed: false });
+    }
+    if (plannedItems.length > 0) {
+      groups.push({ label: 'Planned', key: 'planned', items: plannedItems, collapsed: true });
+    }
+
+    return groups;
+  }
+
+  private reloadAll(): void {
     if (this.currentStart && this.currentEnd) {
       this.loadEvents(this.currentStart, this.currentEnd);
+      this.loadTaskPanel(this.currentStart, this.currentEnd);
     }
   }
 
   toggleMine(val: boolean): void {
     this.showMine = val;
-    this.reloadEvents();
+    this.reloadAll();
+  }
+
+  // --- Task panel ---
+
+  openTaskDetail(id: string): void {
+    this.detailLoading = true;
+    this.selectedActivity.set(null);
+    this.detailVisible = true;
+    this.http.get<{ data: FullActivity }>(`${environment.apiBaseUrl}/activities/${id}`).subscribe({
+      next: (r) => { this.selectedActivity.set(r.data); this.detailLoading = false; },
+      error: () => { this.detailLoading = false; },
+    });
+  }
+
+  getCategoryColor(code: string): string {
+    return CATEGORY_COLORS[code] ?? '#6B7280';
+  }
+
+  formatTaskTime(iso: string): string {
+    const d = new Date(iso);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const itemDate = new Date(d);
+    itemDate.setHours(0, 0, 0, 0);
+
+    if (itemDate.getTime() === today.getTime()) {
+      return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    }
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) +
+      ' ' + d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   }
 
   // --- Create / Edit ---
@@ -479,7 +773,7 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
     this.formError = '';
     this.formAssociations = [];
     const now = date ?? new Date();
-    const end = new Date(now.getTime() + 60 * 60 * 1000); // +1 hour
+    const end = new Date(now.getTime() + 60 * 60 * 1000);
 
     this.actForm.reset({
       activityType: 'EVENT',
@@ -513,6 +807,8 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
 
     this.editId = a.id;
     this.formError = '';
+    this.dateChanges.set([]);
+    this.loadDateChanges(a.id);
     this.actForm.patchValue({
       activityType: a.activityType,
       subject: a.subject,
@@ -539,7 +835,7 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
         this.http.delete(`${environment.apiBaseUrl}/activities/${a.id}`).subscribe({
           next: () => {
             this.detailVisible = false;
-            this.reloadEvents();
+            this.reloadAll();
             this.msg.add({ severity: 'success', summary: 'Deleted' });
           },
         });
@@ -577,11 +873,56 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
     req$.subscribe({
       next: () => {
         this.formVisible = false;
-        this.reloadEvents();
+        this.reloadAll();
         this.msg.add({ severity: 'success', summary: 'Saved', detail: `Activity ${this.editId ? 'updated' : 'created'}` });
       },
       error: (err: HttpErrorResponse) => {
         this.formError = err.error?.error?.message ?? 'An error occurred';
+      },
+    });
+  }
+
+  closeAndAddNew(): void {
+    if (this.actForm.invalid || !this.editId) return;
+
+    const v = this.actForm.value;
+    const carryCategory = v.categoryCode ?? '';
+    const carryUserId = v.userId ?? '';
+    const carryContacts = v.contactIds ?? [];
+    const carryAssociations = this.formAssociations.map((a) => ({ ...a }));
+
+    this.actForm.patchValue({ taskStatus: 'CLOSED' });
+    const body: Record<string, unknown> = {
+      activityType: v.activityType, subject: v.subject,
+      description: v.description || undefined,
+      categoryCode: v.categoryCode, userId: v.userId,
+      isAllDay: v.isAllDay ?? false, contactIds: v.contactIds ?? [],
+      associations: this.formAssociations.filter((a) => a.entityType && a.entityId),
+      dueDateTime: v.dueDateTime instanceof Date ? v.dueDateTime.toISOString() : v.dueDateTime,
+      taskStatus: 'CLOSED',
+    };
+
+    this.http.patch(`${environment.apiBaseUrl}/activities/${this.editId}`, body).subscribe({
+      next: () => {
+        this.msg.add({ severity: 'success', summary: 'Closed', detail: 'Activity closed. Fill in subject & due date for the new activity.' });
+        this.reloadAll();
+
+        this.editId = null;
+        this.formError = '';
+        this.actForm.reset();
+        this.actForm.patchValue({
+          activityType: 'TASK',
+          isAllDay: false,
+          taskStatus: 'OPEN',
+          categoryCode: carryCategory,
+          userId: carryUserId,
+          contactIds: carryContacts,
+        });
+        this.formAssociations = carryAssociations;
+        this.actForm.markAsDirty();
+      },
+      error: (err: HttpErrorResponse) => {
+        this.formError = err.error?.error?.message ?? 'Failed to close activity';
       },
     });
   }
@@ -625,5 +966,21 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
       CONTACT: 'Contact', INFLUENCER: 'Influencer', PROJECT: 'Project',
     };
     return labels[type] ?? type;
+  }
+
+  private loadDateChanges(activityId: string): void {
+    this.http.get<{ data: DateChange[] }>(`${environment.apiBaseUrl}/activities/${activityId}/date-changes`).subscribe({
+      next: (r) => this.dateChanges.set(r.data),
+      error: () => {},
+    });
+  }
+
+  dateFieldLabel(field: string): string {
+    switch (field) {
+      case 'startDateTime': return 'Start Date';
+      case 'endDateTime': return 'End Date';
+      case 'dueDateTime': return 'Due Date';
+      default: return field;
+    }
   }
 }

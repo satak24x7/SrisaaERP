@@ -5,6 +5,7 @@ import { asyncHandler, validate } from '../../../middleware/validate.js';
 import { recordAudit } from '../../../middleware/audit.js';
 import { prisma, newId } from '../../../lib/prisma.js';
 import { errors } from '../../../middleware/error-handler.js';
+import { initiativeDocumentRouter } from './document.routes.js';
 
 const INITIATIVE_STATUSES = ['DRAFT', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED'] as const;
 
@@ -282,3 +283,6 @@ initiativeRouter.delete(
     res.status(204).end();
   }),
 );
+
+/* Mount document sub-router */
+initiativeRouter.use('/:id/documents', initiativeDocumentRouter);

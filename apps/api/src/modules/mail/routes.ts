@@ -1,14 +1,20 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
+import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { encrypt, decrypt } from '../../lib/crypto.js';
 import { summarizeEmail, draftEmailReply } from '../../lib/gemini.js';
-import { errors } from '../../middleware/error-handler.js';
+import { errors, AppError } from '../../middleware/error-handler.js';
+import { logger } from '../../lib/logger.js';
+import { uploadFile as storageUpload } from '../../lib/dms-storage.js';
 import * as imapService from './imap.service.js';
 import * as smtpService from './smtp.service.js';
+import * as msgraphService from './msgraph.service.js';
 
 function actorId(req: import('express').Request): string {
   const raw = req.user?.id ?? 'usr_anonymous';
@@ -70,13 +76,18 @@ function accountToDto(row: Record<string, unknown>) {
   return {
     id: row.id, label: row.label, emailAddress: row.emailAddress,
     senderName: row.senderName ?? null,
-    imapHost: row.imapHost, imapPort: row.imapPort, imapSsl: row.imapSsl,
-    smtpHost: row.smtpHost, smtpPort: row.smtpPort, smtpSsl: row.smtpSsl,
+    accountType: row.accountType ?? 'IMAP',
+    imapHost: row.imapHost ?? null, imapPort: row.imapPort ?? null, imapSsl: row.imapSsl,
+    smtpHost: row.smtpHost ?? null, smtpPort: row.smtpPort ?? null, smtpSsl: row.smtpSsl,
     isActive: row.isActive,
     lastSyncAt: row.lastSyncAt ? (row.lastSyncAt as Date).toISOString() : null,
     lastSyncError: row.lastSyncError ?? null,
     createdAt: (row.createdAt as Date).toISOString(),
   };
+}
+
+function isMs365(account: { accountType?: string | null }): boolean {
+  return account.accountType === 'MICROSOFT_365';
 }
 
 // --- Router ---
@@ -153,21 +164,30 @@ mailRouter.delete('/accounts/:id', validate({ params: IdParams }), asyncHandler(
   res.status(204).end();
 }));
 
-/* POST /accounts/:id/test — test IMAP connection */
+/* POST /accounts/:id/test — test connection */
 mailRouter.post('/accounts/:id/test', validate({ params: IdParams }), asyncHandler(async (req, res) => {
   const userId = await resolveMyUserId(req);
   const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
   if (!account) throw errors.notFound('Mail account not found');
-  const result = await imapService.testConnection(account as unknown as Parameters<typeof imapService.testConnection>[0]);
-  res.json({ data: result });
+
+  if (isMs365(account)) {
+    const result = await msgraphService.testConnection(account.id);
+    res.json({ data: { imap: result.ok, error: result.error } });
+  } else {
+    const result = await imapService.testConnection(account as unknown as Parameters<typeof imapService.testConnection>[0]);
+    res.json({ data: result });
+  }
 }));
 
-/* GET /accounts/:id/folders — list IMAP folders */
+/* GET /accounts/:id/folders — list mail folders */
 mailRouter.get('/accounts/:id/folders', validate({ params: IdParams }), asyncHandler(async (req, res) => {
   const userId = await resolveMyUserId(req);
   const account = await prisma.mailAccount.findFirst({ where: { id: req.params.id as string, userId: userId!, deletedAt: null } });
   if (!account) throw errors.notFound('Mail account not found');
-  const folders = await imapService.fetchFolders(account as unknown as Parameters<typeof imapService.fetchFolders>[0]);
+
+  const folders = isMs365(account)
+    ? await msgraphService.fetchFolders(account.id)
+    : await imapService.fetchFolders(account as unknown as Parameters<typeof imapService.fetchFolders>[0]);
 
   // Supplement with unread counts from DB cache
   const cachedCounts = await prisma.mailMessage.groupBy({
@@ -222,26 +242,47 @@ mailRouter.get('/accounts/:id/messages', validate({ params: IdParams, query: Lis
     return;
   }
 
-  // Fetch from IMAP (first load or explicit refresh)
-  const result = await imapService.fetchMessageList(
-    account as unknown as Parameters<typeof imapService.fetchMessageList>[0],
-    q.folder, q.page, q.limit,
-  );
+  // Fetch from provider (first load or explicit refresh)
+  let result: { messages: imapService.EnvelopeMessage[]; total: number };
 
-  // Upsert messages into cache
-  for (const msg of result.messages) {
-    await prisma.mailMessage.upsert({
-      where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: q.folder, uid: msg.uid } },
-      create: {
-        id: newId(), mailAccountId: account.id, folder: q.folder, uid: msg.uid,
-        messageId: msg.messageId, inReplyTo: msg.inReplyTo,
-        fromAddress: msg.fromAddress, fromName: msg.fromName,
-        toAddresses: msg.toAddresses, ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
-        subject: msg.subject, sentAt: msg.sentAt,
-        isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
-      },
-      update: { isRead: msg.isRead, isFlagged: msg.isFlagged },
-    });
+  if (isMs365(account)) {
+    const graphResult = await msgraphService.fetchMessageList(account.id, q.folder, q.page, q.limit);
+    // Store graphId in cache so we can fetch body later
+    for (const msg of graphResult.messages) {
+      await prisma.mailMessage.upsert({
+        where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: q.folder, uid: msg.uid } },
+        create: {
+          id: newId(), mailAccountId: account.id, folder: q.folder, uid: msg.uid,
+          messageId: msg.graphId, inReplyTo: null,
+          fromAddress: msg.fromAddress, fromName: msg.fromName,
+          toAddresses: msg.toAddresses, ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
+          subject: msg.subject, sentAt: msg.sentAt,
+          isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
+        },
+        update: { isRead: msg.isRead, isFlagged: msg.isFlagged },
+      });
+    }
+    result = { messages: graphResult.messages, total: graphResult.total };
+  } else {
+    result = await imapService.fetchMessageList(
+      account as unknown as Parameters<typeof imapService.fetchMessageList>[0],
+      q.folder, q.page, q.limit,
+    );
+    // Upsert messages into cache
+    for (const msg of result.messages) {
+      await prisma.mailMessage.upsert({
+        where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: q.folder, uid: msg.uid } },
+        create: {
+          id: newId(), mailAccountId: account.id, folder: q.folder, uid: msg.uid,
+          messageId: msg.messageId, inReplyTo: msg.inReplyTo,
+          fromAddress: msg.fromAddress, fromName: msg.fromName,
+          toAddresses: msg.toAddresses, ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
+          subject: msg.subject, sentAt: msg.sentAt,
+          isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
+        },
+        update: { isRead: msg.isRead, isFlagged: msg.isFlagged },
+      });
+    }
   }
 
   res.json({
@@ -316,25 +357,43 @@ mailRouter.get('/messages/by-uid', validate({ query: ByUidQuery }), asyncHandler
 
   // Fetch body if not cached
   if (!cached.bodyHtml && !cached.bodyText) {
-    const parsed = await imapService.fetchMessageBody(
-      account as unknown as Parameters<typeof imapService.fetchMessageBody>[0],
-      q.folder, q.uid,
-    );
-    const attachmentsMeta = (parsed.attachments ?? []).map((a, i) => ({
-      index: i, filename: a.filename ?? `attachment-${i}`,
-      contentType: a.contentType ?? 'application/octet-stream', size: a.size ?? 0,
-    }));
-
-    await prisma.mailMessage.update({
-      where: { id: cached.id },
-      data: {
-        bodyHtml: parsed.html || null, bodyText: parsed.text || null,
-        snippet: (parsed.text ?? '').slice(0, 500),
-        hasAttachments: attachmentsMeta.length > 0,
-        attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
-        isRead: true,
-      },
-    });
+    if (isMs365(account)) {
+      const graphId = cached.messageId;
+      if (!graphId) throw errors.businessRule('NO_GRAPH_ID', 'Cannot fetch message — missing Graph ID');
+      const body = await msgraphService.fetchMessageBody(account.id, graphId);
+      const attachmentsMeta = body.attachments.map((a, i) => ({
+        index: i, filename: a.filename, contentType: a.contentType, size: a.size, graphAttachmentId: a.id,
+      }));
+      await prisma.mailMessage.update({
+        where: { id: cached.id },
+        data: {
+          bodyHtml: body.bodyHtml, bodyText: body.bodyText,
+          hasAttachments: attachmentsMeta.length > 0,
+          attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
+          isRead: true,
+        },
+      });
+      void msgraphService.markRead(account.id, graphId);
+    } else {
+      const parsed = await imapService.fetchMessageBody(
+        account as unknown as Parameters<typeof imapService.fetchMessageBody>[0],
+        q.folder, q.uid,
+      );
+      const attachmentsMeta = (parsed.attachments ?? []).map((a, i) => ({
+        index: i, filename: a.filename ?? `attachment-${i}`,
+        contentType: a.contentType ?? 'application/octet-stream', size: a.size ?? 0,
+      }));
+      await prisma.mailMessage.update({
+        where: { id: cached.id },
+        data: {
+          bodyHtml: parsed.html || null, bodyText: parsed.text || null,
+          snippet: (parsed.text ?? '').slice(0, 500),
+          hasAttachments: attachmentsMeta.length > 0,
+          attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
+          isRead: true,
+        },
+      });
+    }
     cached = await prisma.mailMessage.findUniqueOrThrow({ where: { id: cached.id } });
   }
 
@@ -356,12 +415,47 @@ mailRouter.get('/messages/:id', validate({ params: MsgIdParams }), asyncHandler(
   const userId = await resolveMyUserId(req);
   const cached = await prisma.mailMessage.findFirst({
     where: { id: req.params.id as string },
-    include: { mailAccount: { select: { id: true, userId: true, emailAddress: true, imapHost: true, imapPort: true, imapSsl: true, encryptedPass: true, passIv: true, passTag: true } } },
+    include: { mailAccount: { select: { id: true, userId: true, emailAddress: true, accountType: true, imapHost: true, imapPort: true, imapSsl: true, encryptedPass: true, passIv: true, passTag: true } } },
   });
   if (!cached || cached.mailAccount.userId !== userId) throw errors.notFound('Message not found');
 
-  // If body not cached, fetch from IMAP
+  // If body not cached, fetch from provider
   if (!cached.bodyHtml && !cached.bodyText) {
+    if (isMs365(cached.mailAccount)) {
+      // For MS365, messageId stores the Graph message ID
+      const graphId = cached.messageId;
+      if (!graphId) throw errors.businessRule('NO_GRAPH_ID', 'Cannot fetch message body — missing Graph ID');
+      const body = await msgraphService.fetchMessageBody(cached.mailAccount.id, graphId);
+      const attachmentsMeta = body.attachments.map((a, i) => ({
+        index: i, filename: a.filename, contentType: a.contentType, size: a.size, graphAttachmentId: a.id,
+      }));
+      await prisma.mailMessage.update({
+        where: { id: cached.id },
+        data: {
+          bodyHtml: body.bodyHtml, bodyText: body.bodyText,
+          hasAttachments: attachmentsMeta.length > 0,
+          attachments: attachmentsMeta.length > 0 ? attachmentsMeta : undefined,
+          isRead: true,
+        },
+      });
+      // Mark as read in Graph too
+      void msgraphService.markRead(cached.mailAccount.id, graphId);
+
+      const updated = await prisma.mailMessage.findUniqueOrThrow({ where: { id: cached.id } });
+      res.json({
+        data: {
+          id: updated.id, folder: updated.folder, uid: updated.uid, messageId: updated.messageId,
+          fromAddress: updated.fromAddress, fromName: updated.fromName,
+          toAddresses: updated.toAddresses, ccAddresses: updated.ccAddresses,
+          subject: updated.subject, sentAt: updated.sentAt.toISOString(),
+          bodyHtml: updated.bodyHtml, bodyText: updated.bodyText,
+          attachments: updated.attachments ?? [], isRead: true, isFlagged: updated.isFlagged,
+          aiSummary: updated.aiSummary ?? null,
+        },
+      });
+      return;
+    }
+
     const parsed = await imapService.fetchMessageBody(
       cached.mailAccount as unknown as Parameters<typeof imapService.fetchMessageBody>[0],
       cached.folder, cached.uid,
@@ -415,6 +509,47 @@ mailRouter.get('/messages/:id/attachment/:idx', validate({ params: AttachParams 
   const userId = await resolveMyUserId(req);
   const cached = await prisma.mailMessage.findFirst({
     where: { id: req.params.id as string },
+    include: { mailAccount: { select: { id: true, userId: true, emailAddress: true, accountType: true, imapHost: true, imapPort: true, imapSsl: true, encryptedPass: true, passIv: true, passTag: true } } },
+  });
+  if (!cached || cached.mailAccount.userId !== userId) throw errors.notFound('Message not found');
+
+  const idx = Number(req.params.idx);
+
+  if (isMs365(cached.mailAccount)) {
+    const graphId = cached.messageId;
+    if (!graphId) throw errors.businessRule('NO_GRAPH_ID', 'Cannot fetch attachment — missing Graph ID');
+    // Get attachment ID from cached metadata
+    const attMeta = (cached.attachments as Array<{ graphAttachmentId?: string; filename: string; contentType: string }> | null)?.[idx];
+    if (!attMeta?.graphAttachmentId) throw errors.notFound('Attachment not found');
+    const att = await msgraphService.downloadAttachment(cached.mailAccount.id, graphId, attMeta.graphAttachmentId);
+    res.setHeader('Content-Type', att.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${att.filename}"`);
+    res.send(att.data);
+  } else {
+    const att = await imapService.streamAttachment(
+      cached.mailAccount as unknown as Parameters<typeof imapService.streamAttachment>[0],
+      cached.folder, cached.uid, idx,
+    );
+    res.setHeader('Content-Type', att.contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${att.filename}"`);
+    res.send(att.content);
+  }
+}));
+
+// ===== Save attachment to DMS =====
+
+const SaveAttachBody = z.object({
+  folderId: z.string().min(1).max(26),
+  name: z.string().min(1).max(255).optional(),
+  entityType: z.enum(['OPPORTUNITY', 'PROJECT', 'TENDER', 'INITIATIVE', 'ACCOUNT']).optional(),
+  entityId: z.string().min(1).max(26).optional(),
+});
+
+/* POST /messages/:id/attachment/:idx/save-to-dms — save attachment to DMS folder */
+mailRouter.post('/messages/:id/attachment/:idx/save-to-dms', validate({ params: AttachParams, body: SaveAttachBody }), asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  const cached = await prisma.mailMessage.findFirst({
+    where: { id: req.params.id as string },
     include: { mailAccount: { select: { id: true, userId: true, emailAddress: true, imapHost: true, imapPort: true, imapSsl: true, encryptedPass: true, passIv: true, passTag: true } } },
   });
   if (!cached || cached.mailAccount.userId !== userId) throw errors.notFound('Message not found');
@@ -425,9 +560,66 @@ mailRouter.get('/messages/:id/attachment/:idx', validate({ params: AttachParams 
     cached.folder, cached.uid, idx,
   );
 
-  res.setHeader('Content-Type', att.contentType);
-  res.setHeader('Content-Disposition', `attachment; filename="${att.filename}"`);
-  res.send(att.content);
+  const body = req.body as z.infer<typeof SaveAttachBody>;
+
+  // Validate folder exists
+  const folder = await prisma.documentFolder.findFirst({ where: { id: body.folderId, deletedAt: null } });
+  if (!folder) throw errors.notFound('Folder not found');
+
+  // Write attachment to temp file for the storage layer
+  const tempDir = path.join(os.tmpdir(), 'govprojects-mail-att');
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+  const ext = path.extname(att.filename) || '';
+  const tempFileName = `${newId()}${ext}`;
+  const tempPath = path.join(tempDir, tempFileName);
+  fs.writeFileSync(tempPath, att.content);
+
+  // Build a multer-like file object for the storage layer
+  const multerFile = {
+    path: tempPath,
+    originalname: att.filename,
+    mimetype: att.contentType,
+    size: att.content.length,
+    filename: tempFileName,
+    fieldname: 'file',
+    encoding: '7bit',
+    destination: tempDir,
+    buffer: att.content,
+    stream: fs.createReadStream(tempPath),
+  } as Express.Multer.File;
+
+  // Upload via storage layer (uses folder's driveId if Google Drive)
+  const result = await storageUpload(multerFile, folder.driveId ?? '');
+
+  const actor = actorId(req);
+  const docName = body.name?.trim() || path.parse(att.filename).name;
+
+  // Find max sortOrder in target folder
+  const last = await prisma.document.findFirst({
+    where: { folderId: body.folderId, deletedAt: null },
+    orderBy: { sortOrder: 'desc' },
+    select: { sortOrder: true },
+  });
+
+  const doc = await prisma.document.create({
+    data: {
+      id: newId(), folderId: body.folderId, name: docName,
+      fileName: att.filename, mimeType: att.contentType, fileSize: att.content.length,
+      storagePath: result.storagePath,
+      sortOrder: (last?.sortOrder ?? -1) + 1,
+      createdBy: actor, updatedBy: actor,
+    },
+  });
+
+  // Optionally link to an entity
+  if (body.entityType && body.entityId) {
+    await prisma.documentEntityLink.create({
+      data: { id: newId(), documentId: doc.id, entityType: body.entityType, entityId: body.entityId, createdBy: actor },
+    });
+  }
+
+  await recordAudit(req, { action: 'CREATE', resourceType: 'document', resourceId: doc.id, after: { name: doc.name, fileName: doc.fileName, source: 'email_attachment' } });
+  res.status(201).json({ data: { id: doc.id, name: doc.name, fileName: doc.fileName } });
 }));
 
 // ===== Delete messages =====
@@ -644,16 +836,25 @@ mailRouter.post('/accounts/:id/send', validate({ params: IdParams, body: SendMai
   if (!account) throw errors.notFound('Mail account not found');
 
   const body = req.body as z.infer<typeof SendMailBody>;
-  const result = await smtpService.sendMail(
-    account as unknown as Parameters<typeof smtpService.sendMail>[0],
-    { to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, html: body.html },
-  );
+  let messageId: string;
 
-  // Cache sent message locally
+  if (isMs365(account)) {
+    messageId = await msgraphService.sendMail(account.id, {
+      to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, bodyHtml: body.html,
+    });
+  } else {
+    const result = await smtpService.sendMail(
+      account as unknown as Parameters<typeof smtpService.sendMail>[0],
+      { to: body.to, cc: body.cc, bcc: body.bcc, subject: body.subject, html: body.html },
+    );
+    messageId = result.messageId;
+  }
+
+  // Cache sent message locally (MS365 saves to Sent Items automatically, but we cache too)
   await prisma.mailMessage.create({
     data: {
       id: newId(), mailAccountId: account.id, folder: 'Sent', uid: -(Date.now() % 2147483647),
-      messageId: result.messageId, fromAddress: account.emailAddress, fromName: null,
+      messageId, fromAddress: account.emailAddress, fromName: null,
       toAddresses: body.to.map((a) => ({ address: a, name: null })),
       ccAddresses: body.cc?.map((a) => ({ address: a, name: null })),
       subject: body.subject, bodyHtml: body.html,
@@ -662,7 +863,7 @@ mailRouter.post('/accounts/:id/send', validate({ params: IdParams, body: SendMai
     },
   });
 
-  res.json({ data: { messageId: result.messageId } });
+  res.json({ data: { messageId } });
 }));
 
 const ReplyBody = z.object({
@@ -699,16 +900,24 @@ mailRouter.post('/messages/:id/reply', validate({ params: MsgIdParams, body: Rep
 
   const subject = msg.subject?.startsWith('Re: ') ? msg.subject : `Re: ${msg.subject ?? ''}`;
 
-  const result = await smtpService.sendMail(
-    account as unknown as Parameters<typeof smtpService.sendMail>[0],
-    { to: toAddrs, cc: ccAddrs, subject, html: body.html, inReplyTo: msg.messageId ?? undefined, references: msg.messageId ?? undefined },
-  );
+  let messageId: string;
+  if (isMs365(account)) {
+    messageId = await msgraphService.sendMail(account.id, {
+      to: toAddrs, cc: ccAddrs, subject, bodyHtml: body.html, inReplyTo: msg.messageId ?? undefined,
+    });
+  } else {
+    const result = await smtpService.sendMail(
+      account as unknown as Parameters<typeof smtpService.sendMail>[0],
+      { to: toAddrs, cc: ccAddrs, subject, html: body.html, inReplyTo: msg.messageId ?? undefined, references: msg.messageId ?? undefined },
+    );
+    messageId = result.messageId;
+  }
 
   // Cache sent reply
   await prisma.mailMessage.create({
     data: {
       id: newId(), mailAccountId: account.id, folder: 'Sent', uid: -(Date.now() % 2147483647),
-      messageId: result.messageId, inReplyTo: msg.messageId,
+      messageId, inReplyTo: msg.messageId,
       fromAddress: account.emailAddress, fromName: null,
       toAddresses: toAddrs.map((a) => ({ address: a, name: null })),
       ccAddresses: ccAddrs.length ? ccAddrs.map((a) => ({ address: a, name: null })) : undefined,
@@ -718,7 +927,7 @@ mailRouter.post('/messages/:id/reply', validate({ params: MsgIdParams, body: Rep
     },
   });
 
-  res.json({ data: { messageId: result.messageId } });
+  res.json({ data: { messageId } });
 }));
 
 const ForwardBody = z.object({
@@ -740,15 +949,23 @@ mailRouter.post('/messages/:id/forward', validate({ params: MsgIdParams, body: F
   const account = msg.mailAccount;
   const subject = msg.subject?.startsWith('Fwd: ') ? msg.subject : `Fwd: ${msg.subject ?? ''}`;
 
-  const result = await smtpService.sendMail(
-    account as unknown as Parameters<typeof smtpService.sendMail>[0],
-    { to: body.to, cc: body.cc, subject, html: body.html },
-  );
+  let sendResult: { messageId: string };
+  if (isMs365(account)) {
+    const mid = await msgraphService.sendMail(account.id, {
+      to: body.to, cc: body.cc, subject, bodyHtml: body.html,
+    });
+    sendResult = { messageId: mid };
+  } else {
+    sendResult = await smtpService.sendMail(
+      account as unknown as Parameters<typeof smtpService.sendMail>[0],
+      { to: body.to, cc: body.cc, subject, html: body.html },
+    );
+  }
 
   await prisma.mailMessage.create({
     data: {
       id: newId(), mailAccountId: account.id, folder: 'Sent', uid: -(Date.now() % 2147483647),
-      messageId: result.messageId, fromAddress: account.emailAddress, fromName: null,
+      messageId: sendResult.messageId, fromAddress: account.emailAddress, fromName: null,
       toAddresses: body.to.map((a) => ({ address: a, name: null })),
       ccAddresses: body.cc?.map((a) => ({ address: a, name: null })),
       subject, bodyHtml: body.html,
@@ -757,7 +974,7 @@ mailRouter.post('/messages/:id/forward', validate({ params: MsgIdParams, body: F
     },
   });
 
-  res.json({ data: { messageId: result.messageId } });
+  res.json({ data: { messageId: sendResult.messageId } });
 }));
 
 // ===== Phase 3: Entity Linking =====
@@ -866,4 +1083,100 @@ mailRouter.get('/entity-links', validate({ query: EntityLinkQuery }), asyncHandl
       },
     })),
   });
+}));
+
+// ===== Microsoft 365 OAuth =====
+
+/* GET /oauth/microsoft/authorize — get the Microsoft login URL */
+mailRouter.get('/oauth/microsoft/authorize', asyncHandler(async (req, res) => {
+  const userId = await resolveMyUserId(req);
+  if (!userId) throw errors.unauthorized('User not found');
+  // Use userId as state so we can associate the callback
+  const state = Buffer.from(JSON.stringify({ userId })).toString('base64url');
+  const url = await msgraphService.getAuthorizationUrl(state);
+  res.json({ data: { url } });
+}));
+
+/* POST /oauth/microsoft/callback — exchange code for tokens + create account */
+const OAuthCallbackBody = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
+
+mailRouter.post('/oauth/microsoft/callback', validate({ body: OAuthCallbackBody }), asyncHandler(async (req, res) => {
+  try {
+    const userId = await resolveMyUserId(req);
+    if (!userId) throw errors.unauthorized('User not found');
+
+    const { code, state } = req.body as z.infer<typeof OAuthCallbackBody>;
+
+    // Verify state matches this user
+    let stateData: { userId: string };
+    try {
+      stateData = JSON.parse(Buffer.from(state, 'base64url').toString()) as { userId: string };
+    } catch {
+      throw errors.businessRule('INVALID_STATE', 'Invalid OAuth state format. Please try again.');
+    }
+    if (stateData.userId !== userId) {
+      throw errors.businessRule('INVALID_STATE', `OAuth state user mismatch. Expected ${userId}, got ${stateData.userId}. Please try again.`);
+    }
+
+    // Exchange code for tokens
+    logger.info({ codeLength: code.length }, 'Exchanging Microsoft OAuth code');
+    const tokens = await msgraphService.exchangeCodeForTokens(code);
+    logger.info({ email: tokens.email, displayName: tokens.displayName }, 'Microsoft OAuth tokens obtained');
+
+    const actor = actorId(req);
+
+    // Check if account already exists for this email (including soft-deleted)
+    const existing = await prisma.mailAccount.findFirst({
+      where: { userId, emailAddress: tokens.email },
+    });
+
+    if (existing) {
+      // Revive if soft-deleted, or update if active
+      await prisma.mailAccount.update({
+        where: { id: existing.id },
+        data: {
+          accountType: 'MICROSOFT_365',
+          oauthAccessToken: tokens.accessToken,
+          oauthRefreshToken: tokens.refreshToken,
+          oauthTokenExpiry: tokens.expiresAt,
+          senderName: tokens.displayName || existing.senderName,
+          label: `Microsoft 365 (${tokens.email})`,
+          deletedAt: null, // revive if soft-deleted
+          isActive: true,
+          updatedBy: actor,
+        },
+      });
+      const row = await prisma.mailAccount.findUniqueOrThrow({ where: { id: existing.id } });
+      res.json({ data: accountToDto(row as unknown as Record<string, unknown>) });
+      return;
+    }
+
+    // Create new Microsoft 365 account
+    const id = newId();
+    await prisma.mailAccount.create({
+      data: {
+        id, userId, accountType: 'MICROSOFT_365',
+        label: `Microsoft 365 (${tokens.email})`,
+        emailAddress: tokens.email,
+        senderName: tokens.displayName || null,
+        oauthAccessToken: tokens.accessToken,
+        oauthRefreshToken: tokens.refreshToken,
+        oauthTokenExpiry: tokens.expiresAt,
+        createdBy: actor, updatedBy: actor,
+      },
+    });
+
+    await recordAudit(req, { action: 'CREATE', resourceType: 'mail_account', resourceId: id, after: { label: `Microsoft 365`, email: tokens.email } });
+    const row = await prisma.mailAccount.findUniqueOrThrow({ where: { id } });
+    res.status(201).json({ data: accountToDto(row as unknown as Record<string, unknown>) });
+  } catch (err) {
+    // Ensure ALL errors are returned as proper JSON, never as generic 500
+    if (err instanceof AppError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ err: msg, stack: err instanceof Error ? err.stack : undefined }, 'Microsoft OAuth callback failed');
+    throw errors.businessRule('OAUTH_FAILED', msg);
+  }
 }));

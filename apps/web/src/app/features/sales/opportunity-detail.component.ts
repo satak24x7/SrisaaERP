@@ -1,6 +1,7 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
+import { Location } from '@angular/common';
 import { ReactiveFormsModule, FormsModule, FormBuilder, Validators } from '@angular/forms';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { ButtonModule } from 'primeng/button';
@@ -28,7 +29,7 @@ interface Opportunity {
   closedStatus: string | null;
   tenderReleased: boolean;
   contractValuePaise: number | null; probabilityPct: number | null;
-  submissionDue: string | null;
+  submissionDue: string | null; expectedCloseMonth: string | null;
   businessUnitId: string; businessUnitName: string | null;
   accountId: string | null; accountName: string | null;
   endClientAccountId: string | null; endClientName: string | null;
@@ -147,6 +148,10 @@ const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(COS_CATEGORIE
                   <label class="text-sm font-medium text-gray-700">Probability %</label>
                   <p-inputNumber formControlName="probabilityPct" [min]="0" [max]="100" suffix="%" class="w-full" />
                 </div>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="text-sm font-medium text-gray-700">Expected Close Month</label>
+                <input pInputText type="month" formControlName="expectedCloseMonth" class="w-full" />
               </div>
               <div class="grid grid-cols-2 gap-4">
                 <div class="flex flex-col gap-1">
@@ -528,6 +533,45 @@ const CATEGORY_LABELS: Record<string, string> = Object.fromEntries(COS_CATEGORIE
         </p-table>
       </div>
 
+      <!-- Documents Section -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-gray-700 flex items-center gap-2">
+            <i class="pi pi-folder-open text-blue-600"></i> Documents
+          </h3>
+          <div class="flex gap-2">
+            <input #fileInput type="file" class="hidden" (change)="onFileSelect($event)" />
+            <p-button label="Upload Document" icon="pi pi-upload" size="small" (onClick)="fileInput.click()" [loading]="uploadingDoc" />
+          </div>
+        </div>
+
+        @if (documents().length > 0) {
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            @for (doc of documents(); track doc.id) {
+              <div class="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                <div class="flex items-start gap-2">
+                  <i [class]="getDocIcon(doc.mimeType) + ' text-2xl mt-0.5'"></i>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-800 truncate" [title]="doc.name">{{ doc.name }}</p>
+                    <p class="text-xs text-gray-400">{{ formatFileSize(doc.fileSize) }}</p>
+                  </div>
+                </div>
+                <div class="flex justify-end gap-1 mt-2">
+                  <button (click)="viewDocument(doc)" class="p-1 text-gray-400 hover:text-blue-600" title="View">
+                    <i class="pi pi-eye text-sm"></i>
+                  </button>
+                  <button (click)="deleteDocument(doc)" class="p-1 text-gray-400 hover:text-red-600" title="Delete">
+                    <i class="pi pi-trash text-sm"></i>
+                  </button>
+                </div>
+              </div>
+            }
+          </div>
+        } @else {
+          <div class="text-center py-6 text-gray-400 text-sm">No documents uploaded yet</div>
+        }
+      </div>
+
       <!-- Activities Panel -->
       <div class="mt-6">
         <app-activity-panel entityType="OPPORTUNITY" [entityId]="opp()!.id" />
@@ -588,6 +632,7 @@ export class OpportunityDetailComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly location = inject(Location);
   private readonly msg = inject(MessageService);
   private readonly confirm = inject(ConfirmationService);
 
@@ -686,6 +731,10 @@ export class OpportunityDetailComponent implements OnInit {
   // Cost of Sale
   cosEntries = signal<CosEntry[]>([]);
   cosSummary = signal<CosSummary | null>(null);
+
+  // Documents
+  documents = signal<Array<{ id: string; name: string; fileName: string; mimeType: string; fileSize: number; sortOrder: number }>>([]);
+  uploadingDoc = false;
   cosDialogVisible = false;
   cosEditId: string | null = null;
   cosCategories = COS_CATEGORIES;
@@ -698,6 +747,7 @@ export class OpportunityDetailComponent implements OnInit {
     closedStatus: [null as string | null],
     contractValueRupees: [null as number | null],
     probabilityPct: [null as number | null],
+    expectedCloseMonth: [null as string | null],
     businessUnitId: ['', Validators.required],
     ownerUserId: [''],
     accountId: [''],
@@ -729,6 +779,7 @@ export class OpportunityDetailComponent implements OnInit {
           title: r.data.title, stage: r.data.stage, entryPath: r.data.entryPath, closedStatus: r.data.closedStatus,
           contractValueRupees: r.data.contractValuePaise ? r.data.contractValuePaise / 100 : null,
           probabilityPct: r.data.probabilityPct,
+          expectedCloseMonth: r.data.expectedCloseMonth,
           businessUnitId: r.data.businessUnitId,
           ownerUserId: r.data.ownerUserId ?? '',
           accountId: r.data.accountId ?? '', endClientAccountId: r.data.endClientAccountId ?? '',
@@ -739,6 +790,7 @@ export class OpportunityDetailComponent implements OnInit {
         if (this.tenderReleased) this.loadTender();
         this.loading.set(false);
         this.loadCostOfSale(id);
+        this.loadDocuments(id);
       },
       error: () => { this.opp.set(null); this.loading.set(false); },
     });
@@ -977,6 +1029,7 @@ export class OpportunityDetailComponent implements OnInit {
       endClientAccountId: v.endClientAccountId || null,
       ownerUserId: v.ownerUserId || null,
       probabilityPct: v.probabilityPct,
+      expectedCloseMonth: v.expectedCloseMonth || null,
       contactIds: v.contactIds,
     };
     if (v.contractValueRupees != null) body['contractValuePaise'] = Math.round(v.contractValueRupees * 100);
@@ -1005,7 +1058,7 @@ export class OpportunityDetailComponent implements OnInit {
     });
   }
 
-  goBack(): void { this.router.navigate(['/sales/opportunities']); }
+  goBack(): void { this.location.back(); }
 
   stageSeverity(s: string): 'info' | 'success' | 'warn' | 'danger' {
     const sl = s.toLowerCase();
@@ -1013,5 +1066,78 @@ export class OpportunityDetailComponent implements OnInit {
     if (sl.includes('lost')) return 'danger';
     if (sl.includes('bid')) return 'warn';
     return 'info';
+  }
+
+  // ---- Documents ----
+
+  private loadDocuments(oppId: string): void {
+    this.http.get<{ data: Array<{ id: string; name: string; fileName: string; mimeType: string; fileSize: number; sortOrder: number }> }>(
+      `${environment.apiBaseUrl}/opportunities/${oppId}/documents`,
+    ).subscribe({
+      next: (r) => this.documents.set(r.data),
+    });
+  }
+
+  onFileSelect(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !this.opp()) return;
+    input.value = ''; // reset so same file can be selected again
+
+    this.uploadingDoc = true;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('name', file.name.replace(/\.[^.]+$/, '')); // name without extension
+
+    this.http.post(`${environment.apiBaseUrl}/opportunities/${this.opp()!.id}/documents`, fd).subscribe({
+      next: () => {
+        this.uploadingDoc = false;
+        this.loadDocuments(this.opp()!.id);
+        this.msg.add({ severity: 'success', summary: 'Uploaded', detail: file.name });
+      },
+      error: (err: HttpErrorResponse) => {
+        this.uploadingDoc = false;
+        this.msg.add({ severity: 'error', summary: 'Upload Failed', detail: err.error?.error?.message ?? 'Error' });
+      },
+    });
+  }
+
+  viewDocument(doc: { id: string; fileName: string }): void {
+    const url = `${environment.apiBaseUrl}/opportunities/${this.opp()!.id}/documents/${doc.id}/download`;
+    this.http.get(url, { responseType: 'blob' }).subscribe({
+      next: (blob) => {
+        const objUrl = URL.createObjectURL(blob);
+        window.open(objUrl, '_blank');
+      },
+    });
+  }
+
+  deleteDocument(doc: { id: string; name: string }): void {
+    this.confirm.confirm({
+      message: `Delete "${doc.name}"?`,
+      accept: () => {
+        this.http.delete(`${environment.apiBaseUrl}/opportunities/${this.opp()!.id}/documents/${doc.id}`).subscribe({
+          next: () => {
+            this.loadDocuments(this.opp()!.id);
+            this.msg.add({ severity: 'success', summary: 'Deleted' });
+          },
+        });
+      },
+    });
+  }
+
+  getDocIcon(mime: string): string {
+    if (mime.includes('pdf')) return 'pi pi-file-pdf text-red-500';
+    if (mime.includes('word') || mime.includes('document')) return 'pi pi-file-word text-blue-600';
+    if (mime.includes('sheet') || mime.includes('excel')) return 'pi pi-file-excel text-green-600';
+    if (mime.includes('image')) return 'pi pi-image text-purple-500';
+    if (mime.includes('presentation') || mime.includes('powerpoint')) return 'pi pi-file text-orange-500';
+    return 'pi pi-file text-gray-400';
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 }

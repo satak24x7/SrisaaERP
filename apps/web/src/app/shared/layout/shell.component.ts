@@ -1,8 +1,10 @@
-import { Component, inject, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy, signal, ElementRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet, RouterLink, RouterLinkActive, Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { OidcSecurityService } from 'angular-auth-oidc-client';
+import { TooltipModule } from 'primeng/tooltip';
+import { WebSocketService } from '../../core/services/websocket.service';
 import { environment } from '../../../environments/environment';
 
 interface NavChild {
@@ -46,140 +48,255 @@ function isGroup(item: NavItem): item is NavGroup {
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive, TooltipModule],
   template: `
     <div class="flex h-screen">
       <!-- Sidebar -->
-      <aside class="w-64 bg-slate-800 text-white flex flex-col">
-        <div class="p-4 border-b border-slate-700">
-          <h1 class="text-xl font-bold tracking-tight">GovProjects</h1>
-          <p class="text-xs text-slate-400 mt-1">Platform</p>
+      <aside
+        class="bg-slate-800 text-white flex flex-col transition-all duration-300 ease-in-out shrink-0 relative"
+        [class.w-64]="!sidebarCollapsed()"
+        [class.w-16]="sidebarCollapsed()"
+      >
+        <!-- Brand header -->
+        <div class="border-b border-slate-700 flex items-center gap-3 overflow-hidden"
+             [class.px-4]="!sidebarCollapsed()" [class.py-4]="!sidebarCollapsed()"
+             [class.px-2]="sidebarCollapsed()" [class.py-3]="sidebarCollapsed()"
+             [class.justify-center]="sidebarCollapsed()">
+          <img src="logo.png" alt="Srisaa" class="shrink-0" [class.h-9]="!sidebarCollapsed()" [class.h-8]="sidebarCollapsed()" />
+          @if (!sidebarCollapsed()) {
+            <div class="min-w-0">
+              <h1 class="text-lg font-bold tracking-tight leading-tight">SrisaaERP</h1>
+            </div>
+          }
         </div>
-        <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+
+        <!-- Nav -->
+        <nav class="flex-1 overflow-y-auto overflow-x-hidden"
+             [class.p-3]="!sidebarCollapsed()" [class.p-1]="sidebarCollapsed()"
+             [class.space-y-1]="!sidebarCollapsed()" [class.space-y-0.5]="sidebarCollapsed()">
           @for (item of navItems; track item.label) {
             @if (isGroup(item)) {
-              <!-- Collapsible group -->
-              <div>
-                <button
-                  (click)="toggleGroup(item)"
-                  class="w-full flex items-center justify-between px-3 py-2 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-                >
-                  <span class="flex items-center gap-3">
-                    <i [class]="item.icon"></i>
-                    {{ item.label }}
-                  </span>
-                  <i
-                    class="pi text-xs transition-transform duration-200"
-                    [class.pi-chevron-down]="item.expanded"
-                    [class.pi-chevron-right]="!item.expanded"
-                  ></i>
-                </button>
-                @if (item.expanded) {
-                  <div class="ml-4 mt-1 space-y-0.5">
-                    @for (child of item.children; track child.route) {
-                      <a
-                        [routerLink]="child.route"
-                        routerLinkActive="bg-slate-700 text-white"
-                        class="flex items-center gap-3 px-3 py-1.5 rounded-md text-sm text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
-                      >
-                        <i [class]="child.icon + ' text-xs'"></i>
-                        {{ child.label }}
-                      </a>
-                    }
-                  </div>
+              <div class="relative">
+                @if (sidebarCollapsed()) {
+                  <!-- Collapsed: show group icon, click opens flyout -->
+                  <button
+                    data-flyout-area
+                    (click)="toggleFlyout($event, item)"
+                    class="w-full flex items-center justify-center px-2 py-2 rounded-md text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                    [class.bg-slate-700]="flyoutGroup() === item"
+                    [class.text-white]="flyoutGroup() === item"
+                  >
+                    <i [class]="item.icon + ' text-lg'"></i>
+                  </button>
+                } @else {
+                  <!-- Expanded: normal collapsible group -->
+                  <button
+                    (click)="toggleGroup(item)"
+                    class="w-full flex items-center justify-between px-3 py-2 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  >
+                    <span class="flex items-center gap-3">
+                      <i [class]="item.icon"></i>
+                      {{ item.label }}
+                    </span>
+                    <i
+                      class="pi text-xs transition-transform duration-200"
+                      [class.pi-chevron-down]="item.expanded"
+                      [class.pi-chevron-right]="!item.expanded"
+                    ></i>
+                  </button>
+                  @if (item.expanded) {
+                    <div class="ml-4 mt-1 space-y-0.5">
+                      @for (child of item.children; track child.route) {
+                        <a
+                          [routerLink]="child.route"
+                          routerLinkActive="bg-slate-700 text-white"
+                          class="flex items-center gap-3 px-3 py-1.5 rounded-md text-sm text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+                        >
+                          <i [class]="child.icon + ' text-xs'"></i>
+                          {{ child.label }}
+                        </a>
+                      }
+                    </div>
+                  }
                 }
               </div>
             } @else {
               <!-- Simple link -->
-              <a
-                [routerLink]="item.route"
-                routerLinkActive="bg-slate-700 text-white"
-                class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
-              >
-                <i [class]="item.icon"></i>
-                {{ item.label }}
-              </a>
+              @if (sidebarCollapsed()) {
+                <a
+                  [routerLink]="item.route"
+                  routerLinkActive="bg-slate-700 text-white"
+                  class="flex items-center justify-center px-2 py-2 rounded-md text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  [pTooltip]="item.label" tooltipPosition="right"
+                >
+                  <i [class]="item.icon + ' text-lg'"></i>
+                </a>
+              } @else {
+                <a
+                  [routerLink]="item.route"
+                  routerLinkActive="bg-slate-700 text-white"
+                  class="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                >
+                  <i [class]="item.icon"></i>
+                  {{ item.label }}
+                </a>
+              }
             }
           }
         </nav>
-        <div class="p-4 border-t border-slate-700 text-xs text-slate-500">
-          v0.0.1
+
+        <!-- Flyout popup for collapsed groups -->
+        @if (flyoutGroup()) {
+          <div
+            data-flyout-area
+            class="fixed z-[60] w-52 bg-slate-700 rounded-lg shadow-xl border border-slate-600 py-1 overflow-hidden"
+            [style.top.px]="flyoutTop()"
+            [style.left.px]="flyoutLeft()"
+          >
+            <div class="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-600">
+              {{ flyoutGroup()!.label }}
+            </div>
+            @for (child of flyoutGroup()!.children; track child.route) {
+              <a
+                [routerLink]="child.route"
+                routerLinkActive="bg-slate-600 text-white"
+                (click)="closeFlyout()"
+                class="flex items-center gap-3 px-3 py-2 text-sm text-slate-300 hover:bg-slate-600 hover:text-white transition-colors"
+              >
+                <i [class]="child.icon + ' text-xs'"></i>
+                {{ child.label }}
+              </a>
+            }
+          </div>
+        }
+
+        <!-- Bottom section: notifications, user, collapse toggle -->
+        <div class="border-t border-slate-700">
+          <!-- Notification bell -->
+          <div class="relative" data-notif-area
+               [class.px-3]="!sidebarCollapsed()" [class.px-2]="sidebarCollapsed()"
+               [class.py-2]="true">
+            @if (sidebarCollapsed()) {
+              <button (click)="toggleNotifications($event)"
+                      class="w-full flex items-center justify-center p-2 rounded-md text-slate-300 hover:bg-slate-700 hover:text-white transition-colors relative"
+                      pTooltip="Notifications" tooltipPosition="right">
+                <i class="pi pi-bell text-lg"></i>
+                @if (unreadCount() > 0) {
+                  <span class="absolute top-0.5 right-1 bg-red-500 text-white text-[9px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-0.5">
+                    {{ unreadCount() > 99 ? '99+' : unreadCount() }}
+                  </span>
+                }
+              </button>
+            } @else {
+              <button (click)="toggleNotifications($event)"
+                      class="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-slate-300 hover:bg-slate-700 hover:text-white transition-colors relative">
+                <i class="pi pi-bell"></i>
+                <span>Notifications</span>
+                @if (unreadCount() > 0) {
+                  <span class="ml-auto bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[20px] h-[20px] flex items-center justify-center px-1">
+                    {{ unreadCount() > 99 ? '99+' : unreadCount() }}
+                  </span>
+                }
+              </button>
+            }
+
+            <!-- Notification panel (positioned to the right of sidebar) -->
+            @if (notifPanelOpen()) {
+              <div class="fixed z-[60] w-96 bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden"
+                   [style.bottom.px]="80"
+                   [style.left.px]="sidebarCollapsed() ? 68 : 260">
+                <div class="flex items-center justify-between px-4 py-3 bg-gray-50 border-b">
+                  <span class="font-semibold text-sm text-gray-700">Unread Notifications</span>
+                  @if (unreadCount() > 0) {
+                    <button (click)="markAllRead()" class="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                      Mark all read
+                    </button>
+                  }
+                </div>
+                <div class="max-h-80 overflow-y-auto">
+                  @if (notifications().length === 0) {
+                    <div class="py-10 text-center text-gray-400 text-sm">
+                      <i class="pi pi-check-circle text-2xl mb-2 block"></i>
+                      All caught up!
+                    </div>
+                  }
+                  @for (n of notifications(); track n.id) {
+                    <div (click)="onNotificationClick(n)"
+                         class="px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors"
+                         [class.bg-blue-50]="!n.isRead">
+                      <div class="flex items-start gap-3">
+                        <div class="mt-0.5">
+                          <i [class]="getNotifIcon(n.category)" [class.text-blue-500]="!n.isRead" [class.text-gray-400]="n.isRead"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <p class="text-sm font-medium text-gray-800 truncate">{{ n.title }}</p>
+                          @if (n.body) {
+                            <p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{{ n.body }}</p>
+                          }
+                          <p class="text-[11px] text-gray-400 mt-1">{{ formatNotifTime(n.createdAt) }}</p>
+                        </div>
+                        @if (!n.isRead) {
+                          <span class="w-2 h-2 bg-blue-500 rounded-full mt-1.5 shrink-0"></span>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+                <div class="px-4 py-2 bg-gray-50 border-t text-center">
+                  <a routerLink="/admin/notifications" (click)="notifPanelOpen.set(false)" class="text-xs text-blue-600 hover:text-blue-800 font-medium">View all notifications</a>
+                </div>
+              </div>
+            }
+          </div>
+
+          <!-- User info + logout -->
+          <div [class.px-3]="!sidebarCollapsed()" [class.px-2]="sidebarCollapsed()" [class.py-2]="true">
+            @if (sidebarCollapsed()) {
+              <button
+                (click)="logout()"
+                class="w-full flex items-center justify-center p-2 rounded-md text-slate-300 hover:bg-red-700 hover:text-white transition-colors"
+                pTooltip="Logout" tooltipPosition="right"
+              >
+                <i class="pi pi-sign-out text-lg"></i>
+              </button>
+            } @else {
+              <div class="flex items-center gap-2 px-3 py-2">
+                <div class="w-7 h-7 rounded-full bg-slate-600 flex items-center justify-center text-xs font-bold shrink-0">
+                  {{ userInitials() }}
+                </div>
+                <span class="text-sm text-slate-300 truncate flex-1">{{ userName() }}</span>
+                <button
+                  (click)="logout()"
+                  class="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                  pTooltip="Logout" tooltipPosition="top"
+                >
+                  <i class="pi pi-sign-out text-sm"></i>
+                </button>
+              </div>
+            }
+          </div>
+
+          <!-- Collapse toggle -->
+          <div class="border-t border-slate-700 flex items-center"
+               [class.px-3]="!sidebarCollapsed()" [class.px-2]="sidebarCollapsed()"
+               [class.py-2]="true"
+               [class.justify-between]="!sidebarCollapsed()" [class.justify-center]="sidebarCollapsed()">
+            @if (!sidebarCollapsed()) {
+              <span class="text-xs text-slate-500">v0.0.1</span>
+            }
+            <button
+              (click)="toggleSidebar()"
+              class="p-1.5 rounded-md text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+              [pTooltip]="sidebarCollapsed() ? 'Expand menu' : 'Collapse menu'" tooltipPosition="right"
+            >
+              <i class="pi" [class.pi-angle-right]="sidebarCollapsed()" [class.pi-angle-left]="!sidebarCollapsed()"></i>
+            </button>
+          </div>
         </div>
       </aside>
 
       <!-- Main -->
       <div class="flex-1 flex flex-col overflow-hidden">
-        <!-- Top bar -->
-        <header class="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-6 shadow-sm">
-          <div class="text-sm text-gray-500">
-            Welcome back
-          </div>
-          <div class="flex items-center gap-4">
-            <!-- Notification Bell -->
-            <div class="relative">
-              <button (click)="toggleNotifications($event)"
-                      class="relative p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors">
-                <i class="pi pi-bell text-lg"></i>
-                @if (unreadCount() > 0) {
-                  <span class="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-                    {{ unreadCount() > 99 ? '99+' : unreadCount() }}
-                  </span>
-                }
-              </button>
-
-              @if (notifPanelOpen()) {
-                <div class="absolute right-0 top-12 w-96 bg-white rounded-lg shadow-xl border border-gray-200 z-50 overflow-hidden">
-                  <div class="flex items-center justify-between px-4 py-3 bg-gray-50 border-b">
-                    <span class="font-semibold text-sm text-gray-700">Notifications</span>
-                    @if (unreadCount() > 0) {
-                      <button (click)="markAllRead()" class="text-xs text-blue-600 hover:text-blue-800 font-medium">
-                        Mark all read
-                      </button>
-                    }
-                  </div>
-                  <div class="max-h-96 overflow-y-auto">
-                    @if (notifications().length === 0) {
-                      <div class="py-10 text-center text-gray-400 text-sm">
-                        <i class="pi pi-bell-slash text-2xl mb-2 block"></i>
-                        No notifications
-                      </div>
-                    }
-                    @for (n of notifications(); track n.id) {
-                      <div (click)="onNotificationClick(n)"
-                           class="px-4 py-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors"
-                           [class.bg-blue-50]="!n.isRead">
-                        <div class="flex items-start gap-3">
-                          <div class="mt-0.5">
-                            <i [class]="getNotifIcon(n.category)" [class.text-blue-500]="!n.isRead" [class.text-gray-400]="n.isRead"></i>
-                          </div>
-                          <div class="flex-1 min-w-0">
-                            <p class="text-sm font-medium text-gray-800 truncate">{{ n.title }}</p>
-                            @if (n.body) {
-                              <p class="text-xs text-gray-500 mt-0.5 line-clamp-2">{{ n.body }}</p>
-                            }
-                            <p class="text-[11px] text-gray-400 mt-1">{{ formatNotifTime(n.createdAt) }}</p>
-                          </div>
-                          @if (!n.isRead) {
-                            <span class="w-2 h-2 bg-blue-500 rounded-full mt-1.5 shrink-0"></span>
-                          }
-                        </div>
-                      </div>
-                    }
-                  </div>
-                </div>
-              }
-            </div>
-
-            <span class="text-sm font-medium">{{ userName() }}</span>
-            <button
-              (click)="logout()"
-              class="text-sm text-red-600 hover:text-red-800 font-medium"
-            >
-              Logout
-            </button>
-          </div>
-        </header>
-
         <!-- Page content -->
         <main class="flex-1 overflow-auto p-6 bg-gray-50">
           <router-outlet />
@@ -192,13 +309,19 @@ export class ShellComponent implements OnInit, OnDestroy {
   private readonly oidc = inject(OidcSecurityService);
   private readonly http = inject(HttpClient);
   private readonly router = inject(Router);
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
-  private clickListener: ((e: Event) => void) | null = null;
+  private readonly el = inject(ElementRef);
+  private readonly wsService = inject(WebSocketService);
+  private unsubWs: (() => void) | null = null;
 
   userName = signal('');
-  unreadCount = signal(0);
+  userInitials = signal('');
+  unreadCount = this.wsService.unreadCount; // bound to WS service signal
   notifications = signal<Notification[]>([]);
   notifPanelOpen = signal(false);
+  sidebarCollapsed = signal(localStorage.getItem('sidebar_collapsed') === 'true');
+  flyoutGroup = signal<NavGroup | null>(null);
+  flyoutTop = signal(0);
+  flyoutLeft = signal(0);
 
   isGroup = isGroup;
 
@@ -258,6 +381,7 @@ export class ShellComponent implements OnInit, OnDestroy {
         { label: 'Travel Expenses', icon: 'pi pi-car', route: '/finance/travel-expenses' },
       ],
     },
+    { label: 'Documents', icon: 'pi pi-folder-open', route: '/documents' },
     { label: 'Expenses', icon: 'pi pi-wallet', route: '/expenses' },
     { label: 'Procurement', icon: 'pi pi-truck', route: '/procurement' },
     { label: 'Administration', icon: 'pi pi-sitemap', route: '/administration' },
@@ -273,53 +397,55 @@ export class ShellComponent implements OnInit, OnDestroy {
         { label: 'Governments', icon: 'pi pi-globe', route: '/admin/governments' },
         { label: 'Users', icon: 'pi pi-users', route: '/admin/users' },
         { label: 'Roles', icon: 'pi pi-shield', route: '/admin/roles' },
+        { label: 'AI Rules', icon: 'pi pi-sparkles', route: '/admin/ai-rules' },
         { label: 'Configuration', icon: 'pi pi-cog', route: '/admin/configuration' },
+        { label: 'Notifications', icon: 'pi pi-bell', route: '/admin/notifications' },
         { label: 'Mobile Usage', icon: 'pi pi-mobile', route: '/admin/mobile-usage' },
         { label: 'Mail Settings', icon: 'pi pi-envelope', route: '/mail/settings' },
       ],
     },
   ];
 
+  @HostListener('document:click', ['$event'])
+  onDocumentClick(event: Event): void {
+    const target = event.target as HTMLElement;
+    // Close notification panel if clicking outside
+    if (this.notifPanelOpen() && !target.closest('[data-notif-area]')) {
+      this.notifPanelOpen.set(false);
+    }
+    // Close flyout if clicking outside
+    if (this.flyoutGroup() && !target.closest('[data-flyout-area]')) {
+      this.flyoutGroup.set(null);
+    }
+  }
+
   ngOnInit(): void {
     this.oidc.userData$.subscribe(({ userData }) => {
       if (userData) {
-        this.userName.set(
-          userData['name'] || userData['preferred_username'] || userData['email'] || 'User'
+        const name = userData['name'] || userData['preferred_username'] || userData['email'] || 'User';
+        this.userName.set(name);
+        const parts = name.split(' ');
+        this.userInitials.set(
+          parts.length >= 2
+            ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+            : name.substring(0, 2).toUpperCase()
         );
-        // Start polling for notifications once authenticated
-        this.pollUnreadCount();
-        this.pollTimer = setInterval(() => this.pollUnreadCount(), 30_000);
+        // Connect WebSocket for real-time notifications
+        this.wsService.connect();
       }
     });
-
-    // Close panel when clicking outside
-    this.clickListener = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (this.notifPanelOpen() && !target.closest('.relative')) {
-        this.notifPanelOpen.set(false);
-      }
-    };
-    document.addEventListener('click', this.clickListener);
   }
 
   ngOnDestroy(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    if (this.clickListener) document.removeEventListener('click', this.clickListener);
-  }
-
-  private pollUnreadCount(): void {
-    this.http.get<{ data: { unreadCount: number } }>(`${environment.apiBaseUrl}/notifications/unread-count`)
-      .subscribe({
-        next: (r) => this.unreadCount.set(r.data.unreadCount),
-      });
+    if (this.unsubWs) this.unsubWs();
+    this.wsService.disconnect();
   }
 
   private loadNotifications(): void {
-    this.http.get<{ data: Notification[]; meta: { unreadCount: number } }>(`${environment.apiBaseUrl}/notifications?limit=20`)
+    this.http.get<{ data: Notification[]; meta: { unreadCount: number } }>(`${environment.apiBaseUrl}/notifications?limit=20&unreadOnly=true`)
       .subscribe({
         next: (r) => {
           this.notifications.set(r.data);
-          this.unreadCount.set(r.meta.unreadCount);
         },
       });
   }
@@ -336,25 +462,20 @@ export class ShellComponent implements OnInit, OnDestroy {
   markAllRead(): void {
     this.http.post(`${environment.apiBaseUrl}/notifications/read-all`, {}).subscribe({
       next: () => {
-        this.unreadCount.set(0);
-        this.notifications.update((list) => list.map((n) => ({ ...n, isRead: true })));
+        this.notifications.set([]);
       },
     });
   }
 
   onNotificationClick(n: Notification): void {
-    // Mark as read
     if (!n.isRead) {
       this.http.patch(`${environment.apiBaseUrl}/notifications/${n.id}/read`, {}).subscribe({
         next: () => {
-          this.notifications.update((list) =>
-            list.map((item) => item.id === n.id ? { ...item, isRead: true } : item)
-          );
-          this.unreadCount.update((c) => Math.max(0, c - 1));
+          // Remove from unread list
+          this.notifications.update((list) => list.filter((item) => item.id !== n.id));
         },
       });
     }
-    // Navigate if actionUrl exists
     if (n.actionUrl) {
       this.notifPanelOpen.set(false);
       this.router.navigateByUrl(n.actionUrl);
@@ -384,13 +505,40 @@ export class ShellComponent implements OnInit, OnDestroy {
     return new Date(iso).toLocaleDateString();
   }
 
+  toggleSidebar(): void {
+    const collapsed = !this.sidebarCollapsed();
+    this.sidebarCollapsed.set(collapsed);
+    localStorage.setItem('sidebar_collapsed', String(collapsed));
+    if (collapsed) {
+      for (const item of this.navItems) {
+        if (isGroup(item)) item.expanded = false;
+      }
+      this.flyoutGroup.set(null);
+    }
+  }
+
+  toggleFlyout(event: Event, group: NavGroup): void {
+    event.stopPropagation();
+    if (this.flyoutGroup() === group) {
+      this.flyoutGroup.set(null);
+      return;
+    }
+    const btn = (event.currentTarget as HTMLElement);
+    const rect = btn.getBoundingClientRect();
+    this.flyoutTop.set(rect.top);
+    this.flyoutLeft.set(rect.right + 4);
+    this.flyoutGroup.set(group);
+  }
+
+  closeFlyout(): void {
+    this.flyoutGroup.set(null);
+  }
+
   toggleGroup(group: NavGroup): void {
     const opening = !group.expanded;
-    // Collapse all groups first
     for (const item of this.navItems) {
       if (isGroup(item)) item.expanded = false;
     }
-    // Open the clicked one if it was closed
     if (opening) group.expanded = true;
   }
 

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
 import { prisma } from '../../lib/prisma.js';
+import { pushUnreadCount } from '../../lib/websocket.js';
 
 const ListQuery = z.object({
   unreadOnly: z.enum(['true', 'false']).optional(),
@@ -76,10 +77,12 @@ notificationRouter.patch(
   requireAuth,
   asyncHandler(async (req, res) => {
     const { id } = req.params;
+    const userId = req.user!.id;
     await prisma.notification.updateMany({
-      where: { id, userId: req.user!.id },
+      where: { id, userId },
       data: { isRead: true },
     });
+    void pushUnreadCount(userId);
     res.json({ data: { ok: true } });
   }),
 );
@@ -89,10 +92,12 @@ notificationRouter.post(
   '/read-all',
   requireAuth,
   asyncHandler(async (req, res) => {
+    const userId = req.user!.id;
     await prisma.notification.updateMany({
-      where: { userId: req.user!.id, isRead: false },
+      where: { userId, isRead: false },
       data: { isRead: true },
     });
+    void pushUnreadCount(userId);
     res.json({ data: { ok: true } });
   }),
 );

@@ -252,6 +252,40 @@ const STATUS_OPTIONS = [
         </div>
       </div>
 
+      <!-- Documents Section -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-gray-700 flex items-center gap-2">
+            <i class="pi pi-folder-open text-blue-600"></i> Documents
+          </h3>
+          <div>
+            <input #fileInput type="file" class="hidden" (change)="onFileSelect($event)" />
+            <p-button label="Upload Document" icon="pi pi-upload" size="small" (onClick)="fileInput.click()" [loading]="uploadingDoc" />
+          </div>
+        </div>
+        @if (documents().length > 0) {
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            @for (doc of documents(); track doc.id) {
+              <div class="border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
+                <div class="flex items-start gap-2">
+                  <i [class]="getDocIcon(doc.mimeType) + ' text-2xl mt-0.5'"></i>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-800 truncate" [title]="doc.name">{{ doc.name }}</p>
+                    <p class="text-xs text-gray-400">{{ formatFileSize(doc.fileSize) }}</p>
+                  </div>
+                </div>
+                <div class="flex justify-end gap-1 mt-2">
+                  <button (click)="viewDocument(doc)" class="p-1 text-gray-400 hover:text-blue-600" title="View"><i class="pi pi-eye text-sm"></i></button>
+                  <button (click)="deleteDocument(doc)" class="p-1 text-gray-400 hover:text-red-600" title="Delete"><i class="pi pi-trash text-sm"></i></button>
+                </div>
+              </div>
+            }
+          </div>
+        } @else {
+          <div class="text-center py-6 text-gray-400 text-sm">No documents uploaded yet</div>
+        }
+      </div>
+
       <!-- Activity Panel -->
       <div class="mt-6">
         <app-activity-panel entityType="INITIATIVE" [entityId]="initiative()!.id" />
@@ -271,6 +305,10 @@ export class InitiativeDetailComponent implements OnInit {
   loading = signal(true);
   editing = signal(false);
   saving = false;
+
+  // Documents
+  documents = signal<Array<{ id: string; name: string; fileName: string; mimeType: string; fileSize: number }>>([]);
+  uploadingDoc = false;
 
   buOptions = signal<SelectOption[]>([]);
   userOptions = signal<UserOption[]>([]);
@@ -304,7 +342,7 @@ export class InitiativeDetailComponent implements OnInit {
   private loadInitiative(id: string): void {
     this.loading.set(true);
     this.http.get<{ data: Initiative }>(`${environment.apiBaseUrl}/initiatives/${id}`).subscribe({
-      next: (r) => { this.initiative.set(r.data); this.loading.set(false); },
+      next: (r) => { this.initiative.set(r.data); this.loading.set(false); this.loadDocuments(id); },
       error: () => { this.loading.set(false); },
     });
   }
@@ -416,5 +454,59 @@ export class InitiativeDetailComponent implements OnInit {
       case 'QUALIFIED': return 'warn';
       default: return 'info';
     }
+  }
+
+  // ---- Documents ----
+
+  private loadDocuments(initId: string): void {
+    this.http.get<{ data: Array<{ id: string; name: string; fileName: string; mimeType: string; fileSize: number }> }>(
+      `${environment.apiBaseUrl}/initiatives/${initId}/documents`,
+    ).subscribe({ next: (r) => this.documents.set(r.data) });
+  }
+
+  onFileSelect(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file || !this.initiative()) return;
+    input.value = '';
+    this.uploadingDoc = true;
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('name', file.name.replace(/\.[^.]+$/, ''));
+    this.http.post(`${environment.apiBaseUrl}/initiatives/${this.initiative()!.id}/documents`, fd).subscribe({
+      next: () => { this.uploadingDoc = false; this.loadDocuments(this.initiative()!.id); this.msg.add({ severity: 'success', summary: 'Uploaded', detail: file.name }); },
+      error: (err: HttpErrorResponse) => { this.uploadingDoc = false; this.msg.add({ severity: 'error', summary: 'Upload Failed', detail: err.error?.error?.message ?? 'Error' }); },
+    });
+  }
+
+  viewDocument(doc: { id: string }): void {
+    this.http.get(`${environment.apiBaseUrl}/initiatives/${this.initiative()!.id}/documents/${doc.id}/download`, { responseType: 'blob' }).subscribe({
+      next: (blob) => { window.open(URL.createObjectURL(blob), '_blank'); },
+    });
+  }
+
+  deleteDocument(doc: { id: string; name: string }): void {
+    this.confirm.confirm({
+      message: `Delete "${doc.name}"?`,
+      accept: () => {
+        this.http.delete(`${environment.apiBaseUrl}/initiatives/${this.initiative()!.id}/documents/${doc.id}`).subscribe({
+          next: () => { this.loadDocuments(this.initiative()!.id); this.msg.add({ severity: 'success', summary: 'Deleted' }); },
+        });
+      },
+    });
+  }
+
+  getDocIcon(mime: string): string {
+    if (mime.includes('pdf')) return 'pi pi-file-pdf text-red-500';
+    if (mime.includes('word') || mime.includes('document')) return 'pi pi-file-word text-blue-600';
+    if (mime.includes('sheet') || mime.includes('excel')) return 'pi pi-file-excel text-green-600';
+    if (mime.includes('image')) return 'pi pi-image text-purple-500';
+    return 'pi pi-file text-gray-400';
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 }

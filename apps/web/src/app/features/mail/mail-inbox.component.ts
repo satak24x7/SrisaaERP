@@ -99,7 +99,7 @@ interface MessageRow {
                   <tr>
                     <th style="width:40px"><p-checkbox [binary]="true" [(ngModel)]="selectAll" (onChange)="toggleSelectAll()" /></th>
                     <th style="width:30px"></th>
-                    <th>From</th>
+                    <th>{{ isSentFolder() ? 'To' : 'From' }}</th>
                     <th>Subject</th>
                     <th style="width:140px">Date</th>
                     <th style="width:30px"></th>
@@ -114,8 +114,13 @@ interface MessageRow {
                       @if (!m.isRead) { <span class="inline-block w-2 h-2 rounded-full bg-blue-600"></span> }
                     </td>
                     <td (click)="openMessage(m)">
-                      <div class="text-sm">{{ m.fromName || m.fromAddress }}</div>
-                      @if (m.fromName) { <div class="text-xs text-gray-400">{{ m.fromAddress }}</div> }
+                      @if (isSentFolder()) {
+                        <div class="text-sm">{{ m.toAddresses[0]?.name || m.toAddresses[0]?.address || '(unknown)' }}</div>
+                        @if (m.toAddresses.length > 1) { <div class="text-xs text-gray-400">+{{ m.toAddresses.length - 1 }} more</div> }
+                      } @else {
+                        <div class="text-sm">{{ m.fromName || m.fromAddress }}</div>
+                        @if (m.fromName) { <div class="text-xs text-gray-400">{{ m.fromAddress }}</div> }
+                      }
                     </td>
                     <td (click)="openMessage(m)">
                       <div class="text-sm flex items-center gap-2">
@@ -173,6 +178,11 @@ export class MailInboxComponent implements OnInit {
 
   selectedAccountId = '';
   selectedFolder = 'INBOX';
+
+  isSentFolder(): boolean {
+    const f = this.selectedFolder.toLowerCase();
+    return f === 'sent' || f === 'sent items' || f === 'sentitems' || f === 'outbox' || f === 'drafts';
+  }
   currentPage = 1;
   pageSize = 50;
   totalMessages = 0;
@@ -196,7 +206,10 @@ export class MailInboxComponent implements OnInit {
         this.accounts.set(r.data);
         this.loadingAccounts.set(false);
         if (r.data.length > 0) {
-          this.selectedAccountId = r.data[0]!.id;
+          // Use saved default account if it still exists, otherwise first account
+          const savedDefault = localStorage.getItem('mail_default_account');
+          const match = savedDefault ? r.data.find((a) => a.id === savedDefault) : null;
+          this.selectedAccountId = match ? match.id : r.data[0]!.id;
           this.loadFolders();
           this.loadMessages();
         }
@@ -208,6 +221,7 @@ export class MailInboxComponent implements OnInit {
   onAccountChange(): void {
     this.selectedFolder = 'INBOX';
     this.currentPage = 1;
+    localStorage.setItem('mail_default_account', this.selectedAccountId);
     this.loadFolders();
     this.loadMessages();
   }

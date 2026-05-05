@@ -8,6 +8,7 @@ import { SelectModule } from 'primeng/select';
 import { MultiSelectModule } from 'primeng/multiselect';
 import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
+import { TooltipModule } from 'primeng/tooltip';
 import { DialogModule } from 'primeng/dialog';
 import { ToastModule } from 'primeng/toast';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
@@ -21,6 +22,7 @@ interface Ref { id: string; name: string; }
 interface LookupItem { label: string; value: string; isActive?: boolean; }
 interface Association { id: string; entityType: string; entityId: string; entityName: string | null; }
 interface ContactRef { id: string; name: string; }
+interface DateChange { id: string; field: string; oldValue: string | null; newValue: string | null; reason: string | null; changedBy: string; changedByName: string; changedAt: string; }
 interface Activity {
   id: string; activityType: string; subject: string; description: string | null;
   categoryCode: string; userId: string; userName: string | null;
@@ -53,7 +55,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
 @Component({
   selector: 'app-activity-list',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule, ButtonModule, InputTextModule, SelectModule, MultiSelectModule, TableModule, TagModule, DialogModule, ToastModule, ConfirmDialogModule, DatePickerModule, TextareaModule, InputSwitchModule],
+  imports: [CommonModule, ReactiveFormsModule, FormsModule, ButtonModule, InputTextModule, SelectModule, MultiSelectModule, TableModule, TagModule, TooltipModule, DialogModule, ToastModule, ConfirmDialogModule, DatePickerModule, TextareaModule, InputSwitchModule],
   providers: [MessageService, ConfirmationService],
   template: `
     <p-toast /><p-confirmDialog />
@@ -120,7 +122,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
             <td>
               <div class="flex flex-wrap gap-1">
                 @for (assoc of a.associations; track assoc.id) {
-                  <span class="text-xs bg-gray-100 rounded px-2 py-0.5" [title]="entityLabel(assoc.entityType)">{{ assoc.entityName || entityLabel(assoc.entityType) }}</span>
+                  <p-tag [value]="assoc.entityName || entityLabel(assoc.entityType)" severity="secondary" [rounded]="true" [pTooltip]="entityLabel(assoc.entityType)" />
                 }
                 @if (a.associations.length === 0) { <span class="text-xs text-gray-400">-</span> }
               </div>
@@ -221,6 +223,30 @@ const ENTITY_TYPE_LABELS: Record<string, string> = Object.fromEntries(ENTITY_TYP
         @if (dialogError) {
           <div class="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{{ dialogError }}</div>
         }
+
+        <!-- Date Change History -->
+        @if (editId && dateChanges().length > 0) {
+          <div class="mt-4 border-t pt-3">
+            <label class="text-sm font-medium text-gray-700 flex items-center gap-1 mb-2">
+              <i class="pi pi-history text-xs"></i> Date Change History
+            </label>
+            <div class="max-h-40 overflow-y-auto space-y-2">
+              @for (ch of dateChanges(); track ch.id) {
+                <div class="flex items-start gap-2 text-xs bg-gray-50 rounded p-2">
+                  <i class="pi pi-clock text-gray-400 mt-0.5"></i>
+                  <div class="flex-1">
+                    <span class="font-medium">{{ dateFieldLabel(ch.field) }}</span>
+                    changed from
+                    <span class="text-red-600">{{ ch.oldValue ? (ch.oldValue | date:'short') : '(none)' }}</span>
+                    to
+                    <span class="text-green-600">{{ ch.newValue ? (ch.newValue | date:'short') : '(none)' }}</span>
+                    <div class="text-gray-400 mt-0.5">by {{ ch.changedByName }} &middot; {{ ch.changedAt | date:'short' }}</div>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        }
       </form>
       <ng-template pTemplate="footer">
         <div class="flex justify-between w-full">
@@ -279,6 +305,7 @@ export class ActivityListComponent implements OnInit {
   editId: string | null = null;
   dialogError = '';
   formAssociations: Array<{ entityType: string; entityId: string }> = [];
+  dateChanges = signal<DateChange[]>([]);
 
   actForm = this.fb.group({
     activityType: ['EVENT', Validators.required],
@@ -356,8 +383,10 @@ export class ActivityListComponent implements OnInit {
 
   openDialog(activity?: Activity): void {
     this.dialogError = '';
+    this.dateChanges.set([]);
     if (activity) {
       this.editId = activity.id;
+      this.loadDateChanges(activity.id);
       this.actForm.patchValue({
         activityType: activity.activityType,
         subject: activity.subject,
@@ -523,5 +552,21 @@ export class ActivityListComponent implements OnInit {
     if (s === 'CLOSED') return 'success';
     if (s === 'OVERDUE') return 'danger';
     return 'warn';
+  }
+
+  private loadDateChanges(activityId: string): void {
+    this.http.get<{ data: DateChange[] }>(`${environment.apiBaseUrl}/activities/${activityId}/date-changes`).subscribe({
+      next: (r) => this.dateChanges.set(r.data),
+      error: () => {},
+    });
+  }
+
+  dateFieldLabel(field: string): string {
+    switch (field) {
+      case 'startDateTime': return 'Start Date';
+      case 'endDateTime': return 'End Date';
+      case 'dueDateTime': return 'Due Date';
+      default: return field;
+    }
   }
 }

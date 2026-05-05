@@ -12,4 +12,9 @@ export const BID_MANAGEMENT_ROUTES: Routes = [
     loadComponent: () =>
       import('./tender-detail.component').then((m) => m.TenderDetailComponent),
   },
+  {
+    path: 'tenders/:id/cash-flow-plan',
+    loadComponent: () =>
+      import('./tender-cashflow.component').then((m) => m.TenderCashflowComponent),
+  },
 ];

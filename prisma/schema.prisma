@@ -255,6 +255,7 @@ model User {
   appDevices           AppDevice[]
   appUsageDaily        AppUsageDaily[]
   notifications        Notification[]
+  ownedFolders         DocumentFolder[]       @relation("FolderOwner")
 
   @@map("user")
 }
@@ -670,6 +671,7 @@ model Initiative {
   initiativeContacts      InitiativeContact[]
   initiativeLeads         InitiativeLead[]
   initiativeOpportunities InitiativeOpportunity[]
+  documents               InitiativeDocument[]
 
   @@index([businessUnitId, status, createdAt])
   @@index([ownerUserId])
@@ -732,6 +734,28 @@ model InitiativeOpportunity {
   @@map("initiative_opportunity")
 }
 
+model InitiativeDocument {
+  id              String  @id @db.VarChar(26)
+  initiativeId    String  @map("initiative_id") @db.VarChar(26)
+  name            String  @db.VarChar(255)
+  fileName        String  @map("file_name") @db.VarChar(255)
+  mimeType        String  @map("mime_type") @db.VarChar(128)
+  fileSize        Int     @map("file_size")
+  storagePath     String  @map("storage_path") @db.VarChar(512)
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  initiative Initiative @relation(fields: [initiativeId], references: [id])
+
+  @@index([initiativeId, sortOrder])
+  @@map("initiative_document")
+}
+
 model Lead {
   id                    String     @id @db.VarChar(26)
   title                 String     @db.VarChar(255)
@@ -780,6 +804,7 @@ model Opportunity {
   managedTenderId    String?           @map("managed_tender_id") @db.VarChar(26)
   activeTenderId     String?           @map("active_tender_id") @db.VarChar(26)
   submissionDue      DateTime?         @map("submission_due") @db.Date
+  expectedCloseMonth String?           @map("expected_close_month") @db.VarChar(7) // YYYY-MM format
   closedStatus       String?           @map("closed_status") @db.VarChar(64)
   tenderReleased     Boolean           @default(false) @map("tender_released")
 
@@ -800,11 +825,35 @@ model Opportunity {
   initiativeOpportunities  InitiativeOpportunity[]
   costOfSaleEntries        CostOfSaleEntry[]
   tender                   Tender?
+  documents                OpportunityDocument[]
 
   @@index([businessUnitId, stage, createdAt])
   @@index([accountId])
   @@index([closedStatus])
+  @@index([expectedCloseMonth])
   @@map("opportunity")
+}
+
+model OpportunityDocument {
+  id              String  @id @db.VarChar(26)
+  opportunityId   String  @map("opportunity_id") @db.VarChar(26)
+  name            String  @db.VarChar(255)
+  fileName        String  @map("file_name") @db.VarChar(255)
+  mimeType        String  @map("mime_type") @db.VarChar(128)
+  fileSize        Int     @map("file_size")
+  storagePath     String  @map("storage_path") @db.VarChar(512)
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id])
+
+  @@index([opportunityId, sortOrder])
+  @@map("opportunity_document")
 }
 
 // ==========================================================================
@@ -867,6 +916,8 @@ model Tender {
   corrigendumDetails    String?  @map("corrigendum_details") @db.Text
   aiAnalysis            Json?    @map("ai_analysis")          // Gemini-generated RFP analysis
   aiAnalyzedAt          DateTime? @map("ai_analyzed_at")
+  bidEvaluation         Json?    @map("bid_evaluation")       // User-entered PQ assessment, technical scores, go/no-go
+  cashFlowPlan          Json?    @map("cash_flow_plan")       // User-edited BoQ, payment terms, milestones for cash flow
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1552,6 +1603,7 @@ model Activity {
   user         User                @relation("ActivityUser", fields: [userId], references: [id])
   associations ActivityAssociation[]
   contacts     ActivityContact[]
+  dateChanges  ActivityDateChange[]
 
   @@index([activityType, deletedAt])
   @@index([userId, activityType])
@@ -1588,6 +1640,22 @@ model ActivityContact {
   @@unique([activityId, contactId])
   @@index([contactId])
   @@map("activity_contact")
+}
+
+model ActivityDateChange {
+  id         String   @id @db.VarChar(26)
+  activityId String   @map("activity_id") @db.VarChar(26)
+  field      String   @db.VarChar(32) // startDateTime, endDateTime, dueDateTime
+  oldValue   DateTime? @map("old_value") @db.DateTime(3)
+  newValue   DateTime? @map("new_value") @db.DateTime(3)
+  reason     String?  @db.VarChar(500)
+  changedBy  String   @map("changed_by") @db.VarChar(26)
+  changedAt  DateTime @default(now()) @map("changed_at")
+
+  activity Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  @@index([activityId, changedAt])
+  @@map("activity_date_change")
 }
 
 // ==========================================================================
@@ -1867,17 +1935,26 @@ model MailAccount {
   emailAddress  String  @map("email_address") @db.VarChar(255)
   senderName    String? @map("sender_name") @db.VarChar(255)
 
-  imapHost      String  @map("imap_host") @db.VarChar(255)
-  imapPort      Int     @map("imap_port")
+  // Account type: IMAP (manual credentials) or MICROSOFT_365 (OAuth)
+  accountType   String  @default("IMAP") @map("account_type") @db.VarChar(32)
+
+  // IMAP/SMTP fields (used when accountType = IMAP)
+  imapHost      String?  @map("imap_host") @db.VarChar(255)
+  imapPort      Int?     @map("imap_port")
   imapSsl       Boolean @default(true) @map("imap_ssl")
 
-  smtpHost      String  @map("smtp_host") @db.VarChar(255)
-  smtpPort      Int     @map("smtp_port")
+  smtpHost      String?  @map("smtp_host") @db.VarChar(255)
+  smtpPort      Int?     @map("smtp_port")
   smtpSsl       Boolean @default(true) @map("smtp_ssl")
 
-  encryptedPass String  @map("encrypted_pass") @db.Text
-  passIv        String  @map("pass_iv") @db.VarChar(32)
-  passTag       String  @map("pass_tag") @db.VarChar(32)
+  encryptedPass String?  @map("encrypted_pass") @db.Text
+  passIv        String?  @map("pass_iv") @db.VarChar(32)
+  passTag       String?  @map("pass_tag") @db.VarChar(32)
+
+  // OAuth fields (used when accountType = MICROSOFT_365)
+  oauthAccessToken   String?   @map("oauth_access_token") @db.Text
+  oauthRefreshToken  String?   @map("oauth_refresh_token") @db.Text
+  oauthTokenExpiry   DateTime? @map("oauth_token_expiry")
 
   isActive      Boolean  @default(true) @map("is_active")
   lastSyncAt    DateTime? @map("last_sync_at")
@@ -1948,4 +2025,91 @@ model MailEntityLink {
   @@unique([mailMessageId, entityType, entityId])
   @@index([entityType, entityId])
   @@map("mail_entity_link")
+}
+
+// ===== AI Analysis Rules =====
+
+model AiAnalysisRule {
+  id          String   @id @db.VarChar(26)
+  title       String   @db.VarChar(255)
+  ruleText    String   @map("rule_text") @db.Text   // instruction for AI prompt
+  category    String   @db.VarChar(64)              // from lookup list 'ai_rule_category'
+  severity    String   @db.VarChar(16)              // HIGH, MEDIUM, LOW
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+
+  createdBy   String   @map("created_by") @db.VarChar(26)
+  updatedBy   String   @map("updated_by") @db.VarChar(26)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@index([category, enabled])
+  @@index([enabled, sortOrder])
+  @@map("ai_analysis_rule")
+}
+
+// ===== Document Management System =====
+
+model DocumentFolder {
+  id            String   @id @db.VarChar(26)
+  name          String   @db.VarChar(255)
+  parentId      String?  @map("parent_id") @db.VarChar(26)
+  scope         String   @db.VarChar(16) // SHARED | PERSONAL
+  ownerUserId   String?  @map("owner_user_id") @db.VarChar(26)
+  driveId       String?  @map("drive_id") @db.VarChar(255) // Google Drive folder ID
+  sortOrder     Int      @default(0) @map("sort_order")
+
+  createdBy     String   @map("created_by") @db.VarChar(26)
+  updatedBy     String   @map("updated_by") @db.VarChar(26)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  parent        DocumentFolder?  @relation("FolderTree", fields: [parentId], references: [id])
+  children      DocumentFolder[] @relation("FolderTree")
+  documents     Document[]
+  owner         User?            @relation("FolderOwner", fields: [ownerUserId], references: [id])
+
+  @@unique([parentId, name, scope, ownerUserId])
+  @@index([scope, ownerUserId, parentId])
+  @@map("document_folder")
+}
+
+model Document {
+  id            String   @id @db.VarChar(26)
+  folderId      String   @map("folder_id") @db.VarChar(26)
+  name          String   @db.VarChar(255)
+  fileName      String   @map("file_name") @db.VarChar(255)
+  mimeType      String   @map("mime_type") @db.VarChar(100)
+  fileSize      Int      @map("file_size")
+  storagePath   String   @map("storage_path") @db.VarChar(500)
+  sortOrder     Int      @default(0) @map("sort_order")
+
+  createdBy     String   @map("created_by") @db.VarChar(26)
+  updatedBy     String   @map("updated_by") @db.VarChar(26)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  folder        DocumentFolder    @relation(fields: [folderId], references: [id])
+  entityLinks   DocumentEntityLink[]
+
+  @@index([folderId, sortOrder])
+  @@map("document")
+}
+
+model DocumentEntityLink {
+  id            String   @id @db.VarChar(26)
+  documentId    String   @map("document_id") @db.VarChar(26)
+  entityType    String   @map("entity_type") @db.VarChar(32)
+  entityId      String   @map("entity_id") @db.VarChar(26)
+  createdBy     String   @map("created_by") @db.VarChar(26)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("document_entity_link")
 }

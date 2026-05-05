@@ -2,6 +2,7 @@ import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import multer from 'multer';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
@@ -9,17 +10,16 @@ import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
 import { notify } from '../notification/service.js';
+import { uploadFile as storageUpload, downloadFileWithFallback, deleteFileWithFallback } from '../../lib/dms-storage.js';
 
-const TRAVEL_UPLOAD_DIR = path.resolve(process.cwd(), '../../uploads/travel');
-for (const sub of ['tickets', 'hotels', 'expenses']) {
-  const dir = path.join(TRAVEL_UPLOAD_DIR, sub);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
+const TRAVEL_LEGACY_DIR = path.resolve(process.cwd(), '../../uploads/travel');
+const TEMP_DIR = path.join(os.tmpdir(), 'govprojects-travel');
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-function travelUpload(subdir: string) {
+function travelUpload(_subdir: string) {
   return multer({
     storage: multer.diskStorage({
-      destination: (_req, _file, cb) => cb(null, path.join(TRAVEL_UPLOAD_DIR, subdir)),
+      destination: (_req, _file, cb) => cb(null, TEMP_DIR),
       filename: (_req, file, cb) => cb(null, `${newId()}${path.extname(file.originalname)}`),
     }),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
@@ -598,6 +598,8 @@ travelRouter.post('/:id/tickets', travelUpload('tickets').single('file'), asyncH
   });
   if (!parsed.success) { if (req.file) fs.unlinkSync(req.file.path); throw errors.validation(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')); }
   const actor = actorId(req);
+  let attachmentPath: string | null = null;
+  if (req.file) { const r = await storageUpload(req.file, `travel:${plan.id}:tickets`); attachmentPath = r.storagePath; }
   const row = await prisma.travelPlanTicket.create({
     data: {
       id: newId(), travelPlanId: plan.id, ticketType: parsed.data.ticketType,
@@ -605,7 +607,7 @@ travelRouter.post('/:id/tickets', travelUpload('tickets').single('file'), asyncH
       travelDate: new Date(parsed.data.travelDate), returnDate: parsed.data.returnDate ? new Date(parsed.data.returnDate) : null,
       bookingRef: parsed.data.bookingRef ?? null, amountPaise: BigInt(parsed.data.amountPaise),
       notes: parsed.data.notes ?? null,
-      attachmentName: req.file?.originalname ?? null, attachmentPath: req.file?.filename ?? null,
+      attachmentName: req.file?.originalname ?? null, attachmentPath,
       createdBy: actor, updatedBy: actor,
     },
   });
@@ -629,11 +631,12 @@ travelRouter.patch('/:id/tickets/:subId', travelUpload('tickets').single('file')
   if (body.amountPaise !== undefined) data.amountPaise = BigInt(Number(body.amountPaise));
   if (body.notes !== undefined) data.notes = body.notes || null;
   if (req.file) {
-    if (ticket.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
-    data.attachmentName = req.file.originalname; data.attachmentPath = req.file.filename;
+    if (ticket.attachmentPath) { try { await deleteFileWithFallback(ticket.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'tickets')); } catch { /* best effort */ } }
+    const r = await storageUpload(req.file, `travel:${planId}:tickets`);
+    data.attachmentName = req.file.originalname; data.attachmentPath = r.storagePath;
   }
   if (body.removeAttachment === 'true' && !req.file) {
-    if (ticket.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    if (ticket.attachmentPath) { try { await deleteFileWithFallback(ticket.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'tickets')); } catch { /* best effort */ } }
     data.attachmentName = null; data.attachmentPath = null;
   }
   await prisma.travelPlanTicket.update({ where: { id: ticket.id }, data });
@@ -643,7 +646,7 @@ travelRouter.patch('/:id/tickets/:subId', travelUpload('tickets').single('file')
 travelRouter.delete('/:id/tickets/:subId', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
   const ticket = await prisma.travelPlanTicket.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!ticket) throw errors.notFound('Ticket not found');
-  if (ticket.attachmentPath) { const fp = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
+  if (ticket.attachmentPath) { try { await deleteFileWithFallback(ticket.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'tickets')); } catch { /* best effort */ } }
   await prisma.travelPlanTicket.update({ where: { id: ticket.id }, data: { deletedAt: new Date() } });
   res.status(204).end();
 }));
@@ -653,9 +656,10 @@ travelRouter.get('/:id/tickets/:subId/download', validate({ params: SubIdParams 
   const ticket = await prisma.travelPlanTicket.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!ticket) throw errors.notFound('Ticket not found');
   if (!ticket.attachmentPath) throw errors.notFound('No attachment');
-  const fp = path.join(TRAVEL_UPLOAD_DIR, 'tickets', ticket.attachmentPath);
-  if (!fs.existsSync(fp)) throw errors.notFound('File not found on disk');
-  res.download(fp, ticket.attachmentName ?? ticket.attachmentPath);
+  const fileName = ticket.attachmentName ?? ticket.attachmentPath;
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  const { stream: ts } = await downloadFileWithFallback(ticket.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'tickets'));
+  (ts as NodeJS.ReadableStream).pipe(res);
 }));
 
 // --- Nested: Hotels ---
@@ -674,13 +678,15 @@ travelRouter.post('/:id/hotels', travelUpload('hotels').single('file'), asyncHan
   });
   if (!parsed.success) { if (req.file) fs.unlinkSync(req.file.path); throw errors.validation(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')); }
   const actor = actorId(req);
+  let hotelAttachmentPath: string | null = null;
+  if (req.file) { const r = await storageUpload(req.file, `travel:${plan.id}:hotels`); hotelAttachmentPath = r.storagePath; }
   const row = await prisma.travelPlanHotel.create({
     data: {
       id: newId(), travelPlanId: plan.id, hotelName: parsed.data.hotelName, location: parsed.data.location,
       checkIn: new Date(parsed.data.checkIn), checkOut: new Date(parsed.data.checkOut),
       bookingRef: parsed.data.bookingRef ?? null, amountPaise: BigInt(parsed.data.amountPaise),
       notes: parsed.data.notes ?? null,
-      attachmentName: req.file?.originalname ?? null, attachmentPath: req.file?.filename ?? null,
+      attachmentName: req.file?.originalname ?? null, attachmentPath: hotelAttachmentPath,
       createdBy: actor, updatedBy: actor,
     },
   });
@@ -703,11 +709,12 @@ travelRouter.patch('/:id/hotels/:subId', travelUpload('hotels').single('file'), 
   if (body.amountPaise !== undefined) data.amountPaise = BigInt(Number(body.amountPaise));
   if (body.notes !== undefined) data.notes = body.notes || null;
   if (req.file) {
-    if (hotel.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
-    data.attachmentName = req.file.originalname; data.attachmentPath = req.file.filename;
+    if (hotel.attachmentPath) { try { await deleteFileWithFallback(hotel.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'hotels')); } catch { /* best effort */ } }
+    const r = await storageUpload(req.file, `travel:${planId}:hotels`);
+    data.attachmentName = req.file.originalname; data.attachmentPath = r.storagePath;
   }
   if (body.removeAttachment === 'true' && !req.file) {
-    if (hotel.attachmentPath) { const old = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    if (hotel.attachmentPath) { try { await deleteFileWithFallback(hotel.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'hotels')); } catch { /* best effort */ } }
     data.attachmentName = null; data.attachmentPath = null;
   }
   await prisma.travelPlanHotel.update({ where: { id: hotel.id }, data });
@@ -717,7 +724,7 @@ travelRouter.patch('/:id/hotels/:subId', travelUpload('hotels').single('file'), 
 travelRouter.delete('/:id/hotels/:subId', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
   const hotel = await prisma.travelPlanHotel.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!hotel) throw errors.notFound('Hotel not found');
-  if (hotel.attachmentPath) { const fp = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
+  if (hotel.attachmentPath) { try { await deleteFileWithFallback(hotel.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'hotels')); } catch { /* best effort */ } }
   await prisma.travelPlanHotel.update({ where: { id: hotel.id }, data: { deletedAt: new Date() } });
   res.status(204).end();
 }));
@@ -727,9 +734,10 @@ travelRouter.get('/:id/hotels/:subId/download', validate({ params: SubIdParams }
   const hotel = await prisma.travelPlanHotel.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!hotel) throw errors.notFound('Hotel not found');
   if (!hotel.attachmentPath) throw errors.notFound('No attachment');
-  const fp = path.join(TRAVEL_UPLOAD_DIR, 'hotels', hotel.attachmentPath);
-  if (!fs.existsSync(fp)) throw errors.notFound('File not found on disk');
-  res.download(fp, hotel.attachmentName ?? hotel.attachmentPath);
+  const hotelFileName = hotel.attachmentName ?? hotel.attachmentPath;
+  res.setHeader('Content-Disposition', `attachment; filename="${hotelFileName}"`);
+  const { stream: hs } = await downloadFileWithFallback(hotel.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'hotels'));
+  (hs as NodeJS.ReadableStream).pipe(res);
 }));
 
 // --- Nested: Expenses ---
@@ -754,13 +762,15 @@ travelRouter.post('/:id/expenses', travelUpload('expenses').single('file'), asyn
   }
 
   const actor = actorId(req);
+  let expAttachmentPath: string | null = null;
+  if (req.file) { const r = await storageUpload(req.file, `travel:${plan.id}:expenses`); expAttachmentPath = r.storagePath; }
   const row = await prisma.travelPlanExpense.create({
     data: {
       id: newId(), travelPlanId: plan.id, category: parsed.data.category,
       expenseDate: new Date(parsed.data.expenseDate), description: parsed.data.description,
       amountPaise: BigInt(parsed.data.amountPaise), receiptRef: parsed.data.receiptRef ?? null,
       attachmentName: req.file?.originalname ?? null,
-      attachmentPath: req.file?.filename ?? null,
+      attachmentPath: expAttachmentPath,
       createdBy: actor, updatedBy: actor,
     },
   });
@@ -783,19 +793,13 @@ travelRouter.patch('/:id/expenses/:subId', travelUpload('expenses').single('file
   if (body.receiptRef !== undefined) updateFields.receiptRef = body.receiptRef || null;
 
   if (req.file) {
-    // Delete old attachment if exists
-    if (expense.attachmentPath) {
-      const oldPath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
-      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-    }
+    if (expense.attachmentPath) { try { await deleteFileWithFallback(expense.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'expenses')); } catch { /* best effort */ } }
+    const r = await storageUpload(req.file, `travel:${planId}:expenses`);
     updateFields.attachmentName = req.file.originalname;
-    updateFields.attachmentPath = req.file.filename;
+    updateFields.attachmentPath = r.storagePath;
   }
   if (body.removeAttachment === 'true' && !req.file) {
-    if (expense.attachmentPath) {
-      const oldPath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
-      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-    }
+    if (expense.attachmentPath) { try { await deleteFileWithFallback(expense.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'expenses')); } catch { /* best effort */ } }
     updateFields.attachmentName = null;
     updateFields.attachmentPath = null;
   }
@@ -808,10 +812,7 @@ travelRouter.patch('/:id/expenses/:subId', travelUpload('expenses').single('file
 travelRouter.delete('/:id/expenses/:subId', validate({ params: SubIdParams }), asyncHandler(async (req, res) => {
   const expense = await prisma.travelPlanExpense.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!expense) throw errors.notFound('Expense not found');
-  if (expense.attachmentPath) {
-    const filePath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
+  if (expense.attachmentPath) { try { await deleteFileWithFallback(expense.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'expenses')); } catch { /* best effort */ } }
   await prisma.travelPlanExpense.update({ where: { id: expense.id }, data: { deletedAt: new Date() } });
   res.status(204).end();
 }));
@@ -821,7 +822,8 @@ travelRouter.get('/:id/expenses/:subId/download', validate({ params: SubIdParams
   const expense = await prisma.travelPlanExpense.findFirst({ where: { id: req.params.subId as string, travelPlanId: req.params.id as string, deletedAt: null } });
   if (!expense) throw errors.notFound('Expense not found');
   if (!expense.attachmentPath) throw errors.notFound('No attachment');
-  const filePath = path.join(path.join(TRAVEL_UPLOAD_DIR, 'expenses'), expense.attachmentPath);
-  if (!fs.existsSync(filePath)) throw errors.notFound('File not found on disk');
-  res.download(filePath, expense.attachmentName ?? expense.attachmentPath);
+  const expFileName = expense.attachmentName ?? expense.attachmentPath;
+  res.setHeader('Content-Disposition', `attachment; filename="${expFileName}"`);
+  const { stream: es } = await downloadFileWithFallback(expense.attachmentPath, path.join(TRAVEL_LEGACY_DIR, 'expenses'));
+  (es as NodeJS.ReadableStream).pipe(res);
 }));

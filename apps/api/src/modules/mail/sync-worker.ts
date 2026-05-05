@@ -1,6 +1,7 @@
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import * as imapService from './imap.service.js';
+import * as msgraphService from './msgraph.service.js';
 import { newId } from '../../lib/prisma.js';
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -13,30 +14,58 @@ async function syncAccount(accountId: string): Promise<void> {
   if (!account) return;
 
   try {
-    // Fetch recent messages from INBOX
-    const result = await imapService.fetchMessageList(
-      account as unknown as Parameters<typeof imapService.fetchMessageList>[0],
-      'INBOX', 1, 50,
-    );
+    let messages: imapService.EnvelopeMessage[];
 
-    let newCount = 0;
-    for (const msg of result.messages) {
-      const existing = await prisma.mailMessage.findUnique({
-        where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: 'INBOX', uid: msg.uid } },
-      });
-      if (!existing) {
-        await prisma.mailMessage.create({
-          data: {
-            id: newId(), mailAccountId: account.id, folder: 'INBOX', uid: msg.uid,
-            messageId: msg.messageId, inReplyTo: msg.inReplyTo,
-            fromAddress: msg.fromAddress, fromName: msg.fromName,
-            toAddresses: msg.toAddresses,
-            ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
-            subject: msg.subject, sentAt: msg.sentAt,
-            isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
-          },
+    if (account.accountType === 'MICROSOFT_365') {
+      // Sync via Microsoft Graph API
+      const result = await msgraphService.syncRecent(account.id, 50);
+      messages = result.messages;
+
+      // For MS365, store graphId in messageId field
+      for (const msg of result.messages) {
+        const graphMsg = msg as typeof msg & { graphId: string };
+        const existing = await prisma.mailMessage.findUnique({
+          where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: 'INBOX', uid: msg.uid } },
         });
-        newCount++;
+        if (!existing) {
+          await prisma.mailMessage.create({
+            data: {
+              id: newId(), mailAccountId: account.id, folder: 'INBOX', uid: msg.uid,
+              messageId: graphMsg.graphId, inReplyTo: null,
+              fromAddress: msg.fromAddress, fromName: msg.fromName,
+              toAddresses: msg.toAddresses,
+              ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
+              subject: msg.subject, sentAt: msg.sentAt,
+              isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
+            },
+          });
+        }
+      }
+    } else {
+      // Sync via IMAP
+      const result = await imapService.fetchMessageList(
+        account as unknown as Parameters<typeof imapService.fetchMessageList>[0],
+        'INBOX', 1, 50,
+      );
+      messages = result.messages;
+
+      for (const msg of messages) {
+        const existing = await prisma.mailMessage.findUnique({
+          where: { mailAccountId_folder_uid: { mailAccountId: account.id, folder: 'INBOX', uid: msg.uid } },
+        });
+        if (!existing) {
+          await prisma.mailMessage.create({
+            data: {
+              id: newId(), mailAccountId: account.id, folder: 'INBOX', uid: msg.uid,
+              messageId: msg.messageId, inReplyTo: msg.inReplyTo,
+              fromAddress: msg.fromAddress, fromName: msg.fromName,
+              toAddresses: msg.toAddresses,
+              ccAddresses: msg.ccAddresses.length ? msg.ccAddresses : undefined,
+              subject: msg.subject, sentAt: msg.sentAt,
+              isRead: msg.isRead, isFlagged: msg.isFlagged, hasAttachments: msg.hasAttachments,
+            },
+          });
+        }
       }
     }
 
@@ -45,8 +74,9 @@ async function syncAccount(accountId: string): Promise<void> {
       data: { lastSyncAt: new Date(), lastSyncError: null },
     });
 
+    const newCount = messages.length; // simplified — counts fetched, not truly new
     if (newCount > 0) {
-      logger.info({ accountId, email: account.emailAddress, newCount }, 'Mail sync: new messages');
+      logger.info({ accountId, email: account.emailAddress, type: account.accountType, fetched: newCount }, 'Mail sync complete');
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -71,7 +101,6 @@ async function syncAll(): Promise<void> {
 
 export function startMailSyncWorker(): void {
   logger.info({ interval: '5m' }, 'Mail sync worker started');
-  // Run first sync after 30 seconds (let the server warm up)
   setTimeout(() => {
     syncAll().catch((err) => logger.error({ err }, 'Mail sync error'));
   }, 30_000);

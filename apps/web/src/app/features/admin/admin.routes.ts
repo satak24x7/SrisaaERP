@@ -38,6 +38,11 @@ export const ADMIN_ROUTES: Routes = [
       import('./governments.component').then((m) => m.GovernmentsComponent),
   },
   {
+    path: 'ai-rules',
+    loadComponent: () =>
+      import('./ai-rules.component').then((m) => m.AiRulesComponent),
+  },
+  {
     path: 'configuration',
     loadComponent: () =>
       import('./configuration.component').then((m) => m.ConfigurationComponent),
@@ -46,5 +51,10 @@ export const ADMIN_ROUTES: Routes = [
     path: 'mobile-usage',
     loadComponent: () =>
       import('./mobile-usage.component').then((m) => m.MobileUsageComponent),
+  },
+  {
+    path: 'notifications',
+    loadComponent: () =>
+      import('./notifications.component').then((m) => m.NotificationsPageComponent),
   },
 ];

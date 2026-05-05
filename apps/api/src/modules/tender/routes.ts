@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import path from 'path';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
 import { prisma } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
 import { analyzeRfp } from '../../lib/gemini.js';
+import { logger } from '../../lib/logger.js';
 import { tenderDocumentRouter } from './document.routes.js';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), '../../uploads/tender-docs');
@@ -182,24 +184,211 @@ tenderListRouter.post(
       throw errors.businessRule('NO_DOCUMENTS', 'No documents found to analyze. Upload RFP documents first.');
     }
 
-    // Build file paths for Gemini
+    // Build file references for Gemini (supports GDrive and local)
     const filePaths = docs.map((d) => ({
-      path: path.join(UPLOAD_DIR, d.storagePath),
+      storagePath: d.storagePath,
       mimeType: d.mimeType,
     }));
 
-    const analysis = await analyzeRfp(filePaths);
+    let analysis;
+    try {
+      analysis = await analyzeRfp(filePaths);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error({ tenderId, fileCount: filePaths.length, storagePaths: filePaths.map((f) => f.storagePath), err: msg }, 'RFP analysis failed');
+      throw errors.businessRule('ANALYSIS_FAILED', msg);
+    }
 
     // Store the analysis in the tender
     await prisma.tender.update({
       where: { id: tenderId },
       data: {
-        aiAnalysis: analysis as unknown as Record<string, unknown>,
+        aiAnalysis: analysis as unknown as Prisma.InputJsonValue,
         aiAnalyzedAt: new Date(),
       },
     });
 
     res.json({ data: analysis });
+  }),
+);
+
+// ===== Bid Evaluation =====
+
+const TenderIdParam = z.object({ tenderId: z.string().min(1).max(26) });
+
+const BidEvaluationBody = z.object({
+  pqAssessment: z.array(z.object({
+    criteriaId: z.string(),
+    meetsRequirement: z.boolean().nullable(),
+    remarks: z.string().default(''),
+    evidence: z.string().default(''),
+  })).optional(),
+  technicalScoring: z.array(z.object({
+    sectionId: z.string(),
+    expectedScore: z.number().min(0).nullable(),
+    remarks: z.string().default(''),
+  })).optional(),
+  goNoGoDecision: z.enum(['GO', 'NO_GO', 'CONDITIONAL']).nullable().optional(),
+  decisionRemarks: z.string().optional(),
+});
+
+/* GET /:tenderId/bid-evaluation */
+tenderListRouter.get(
+  '/:tenderId/bid-evaluation',
+  requireAuth,
+  validate({ params: TenderIdParam }),
+  asyncHandler(async (req, res) => {
+    const tender = await prisma.tender.findFirst({
+      where: { id: req.params.tenderId as string, deletedAt: null },
+      select: { aiAnalysis: true, aiAnalyzedAt: true, bidEvaluation: true },
+    });
+    if (!tender) throw errors.notFound('Tender not found');
+
+    const ai = tender.aiAnalysis as Record<string, unknown> | null;
+
+    res.json({
+      data: {
+        aiPreQualification: (ai?.preQualification as unknown[]) ?? [],
+        aiTechnicalEvaluation: (ai?.technicalEvaluation as unknown) ?? null,
+        aiRecommendation: (ai?.recommendation as string) ?? null,
+        aiAnalyzedAt: tender.aiAnalyzedAt?.toISOString() ?? null,
+        bidEvaluation: tender.bidEvaluation ?? null,
+      },
+    });
+  }),
+);
+
+/* PUT /:tenderId/bid-evaluation */
+tenderListRouter.put(
+  '/:tenderId/bid-evaluation',
+  requireAuth,
+  validate({ params: TenderIdParam, body: BidEvaluationBody }),
+  asyncHandler(async (req, res) => {
+    const tender = await prisma.tender.findFirst({
+      where: { id: req.params.tenderId as string, deletedAt: null },
+    });
+    if (!tender) throw errors.notFound('Tender not found');
+
+    const body = req.body as z.infer<typeof BidEvaluationBody>;
+    const actor = req.user?.id ?? 'usr_anonymous';
+    const actorTrimmed = actor.length <= 26 ? actor : actor.slice(0, 26);
+
+    const evaluation = {
+      pqAssessment: body.pqAssessment ?? [],
+      technicalScoring: body.technicalScoring ?? [],
+      goNoGoDecision: body.goNoGoDecision ?? null,
+      decisionRemarks: body.decisionRemarks ?? '',
+      decidedBy: body.goNoGoDecision ? actorTrimmed : null,
+      decidedAt: body.goNoGoDecision ? new Date().toISOString() : null,
+    };
+
+    await prisma.tender.update({
+      where: { id: tender.id },
+      data: {
+        bidEvaluation: evaluation as unknown as Prisma.InputJsonValue,
+        updatedBy: actorTrimmed,
+      },
+    });
+
+    res.json({ data: evaluation });
+  }),
+);
+
+/* GET /:tenderId/cash-flow-plan — extracted BoQ, payment terms, milestones for cash flow planning */
+tenderListRouter.get(
+  '/:tenderId/cash-flow-plan',
+  requireAuth,
+  validate({ params: TenderIdParam }),
+  asyncHandler(async (req, res) => {
+    const tender = await prisma.tender.findFirst({
+      where: { id: req.params.tenderId as string, deletedAt: null },
+      select: { aiAnalysis: true, aiAnalyzedAt: true, cashFlowPlan: true, completionPeriodDays: true, estimatedValuePaise: true },
+    });
+    if (!tender) throw errors.notFound('Tender not found');
+
+    const ai = tender.aiAnalysis as Record<string, unknown> | null;
+
+    res.json({
+      data: {
+        boqItems: (ai?.boqItems as unknown[]) ?? [],
+        paymentTerms: (ai?.paymentTerms as unknown) ?? null,
+        milestones: (ai?.milestones as unknown[]) ?? [],
+        completionPeriodDays: tender.completionPeriodDays,
+        estimatedValuePaise: tender.estimatedValuePaise != null ? Number(tender.estimatedValuePaise) : null,
+        aiAnalyzedAt: tender.aiAnalyzedAt?.toISOString() ?? null,
+        cashFlowPlan: tender.cashFlowPlan ?? null,
+      },
+    });
+  }),
+);
+
+/* PUT /:tenderId/cash-flow-plan — save user-edited cash flow plan */
+const CashFlowPlanBody = z.object({
+  boqItems: z.array(z.object({
+    id: z.string(),
+    description: z.string(),
+    unit: z.string().nullable().optional(),
+    quantity: z.number().nullable().optional(),
+    unitRate: z.number().nullable().optional(),
+    total: z.number().nullable().optional(),
+    estimatedAmountText: z.string().nullable().optional(),
+  })).optional(),
+  paymentTerms: z.object({
+    summary: z.string().optional(),
+    advancePct: z.number().nullable().optional(),
+    retentionPct: z.number().nullable().optional(),
+    retentionRelease: z.string().nullable().optional(),
+    defectLiabilityPeriodMonths: z.number().nullable().optional(),
+    paymentCycleDays: z.number().nullable().optional(),
+    schedule: z.array(z.object({
+      id: z.string(),
+      milestone: z.string(),
+      percentageOfContract: z.number().nullable().optional(),
+      conditions: z.string().nullable().optional(),
+      estimatedMonth: z.number().nullable().optional(),
+    })).optional(),
+  }).nullable().optional(),
+  milestones: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    durationMonths: z.number().nullable().optional(),
+    percentageOfWork: z.number().nullable().optional(),
+    paymentLinked: z.boolean().optional(),
+    paymentPct: z.number().nullable().optional(),
+    deliverables: z.array(z.string()).optional(),
+  })).optional(),
+  anticipatedStartDate: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+});
+
+tenderListRouter.put(
+  '/:tenderId/cash-flow-plan',
+  requireAuth,
+  validate({ params: TenderIdParam, body: CashFlowPlanBody }),
+  asyncHandler(async (req, res) => {
+    const tender = await prisma.tender.findFirst({
+      where: { id: req.params.tenderId as string, deletedAt: null },
+    });
+    if (!tender) throw errors.notFound('Tender not found');
+
+    const actor = req.user?.id ?? 'usr_anonymous';
+    const actorTrimmed = actor.length <= 26 ? actor : actor.slice(0, 26);
+
+    const plan = {
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+      updatedBy: actorTrimmed,
+    };
+
+    await prisma.tender.update({
+      where: { id: tender.id },
+      data: {
+        cashFlowPlan: plan as unknown as Prisma.InputJsonValue,
+        updatedBy: actorTrimmed,
+      },
+    });
+
+    res.json({ data: plan });
   }),
 );
 

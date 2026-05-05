@@ -2,19 +2,22 @@ import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import multer from 'multer';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
+import { uploadFile as storageUpload, downloadFileWithFallback, deleteFileWithFallback } from '../../lib/dms-storage.js';
 
-const UPLOAD_DIR = path.resolve(process.cwd(), '../../uploads/tender-docs');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const LEGACY_DIR = path.resolve(process.cwd(), '../../uploads/tender-docs');
+const TEMP_DIR = path.join(os.tmpdir(), 'govprojects-tender');
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    destination: (_req, _file, cb) => cb(null, TEMP_DIR),
     filename: (_req, file, cb) => cb(null, `${newId()}${path.extname(file.originalname)}`),
   }),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
@@ -79,11 +82,13 @@ tenderDocumentRouter.post(
     });
 
     const actor = actorId(req);
+    // Upload via storage layer — uses tender folder by ID
+    const result = await storageUpload(file, `tender:${tenderId}`);
     const row = await prisma.tenderDocument.create({
       data: {
         id: newId(), tenderId, name, docType,
         fileName: file.originalname, mimeType: file.mimetype,
-        fileSize: file.size, storagePath: path.basename(file.path),
+        fileSize: file.size, storagePath: result.storagePath,
         sortOrder: (last?.sortOrder ?? -1) + 1,
         createdBy: actor, updatedBy: actor,
       },
@@ -104,12 +109,11 @@ tenderDocumentRouter.get(
     });
     if (!doc) throw errors.notFound('Document not found');
 
-    const filePath = path.join(UPLOAD_DIR, doc.storagePath);
-    if (!fs.existsSync(filePath)) throw errors.notFound('File not found on disk');
-
     res.setHeader('Content-Disposition', `inline; filename="${doc.fileName}"`);
     res.setHeader('Content-Type', doc.mimeType);
-    res.sendFile(filePath);
+
+    const { stream } = await downloadFileWithFallback(doc.storagePath, LEGACY_DIR);
+    (stream as NodeJS.ReadableStream).pipe(res);
   }),
 );
 

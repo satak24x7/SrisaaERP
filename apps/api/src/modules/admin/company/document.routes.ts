@@ -2,23 +2,22 @@ import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import multer from 'multer';
 import { requireAuth } from '../../../middleware/auth.js';
 import { asyncHandler, validate } from '../../../middleware/validate.js';
 import { recordAudit } from '../../../middleware/audit.js';
 import { prisma, newId } from '../../../lib/prisma.js';
 import { errors } from '../../../middleware/error-handler.js';
+import { uploadFile as storageUpload, downloadFileWithFallback, deleteFileWithFallback } from '../../../lib/dms-storage.js';
 
-const UPLOAD_DIR = path.resolve(process.cwd(), '../../uploads/company-docs');
-
-// Ensure upload dir exists
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
+const LEGACY_DIR = path.resolve(process.cwd(), '../../uploads/company-docs');
+const TEMP_DIR = path.join(os.tmpdir(), 'govprojects-company');
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    destination: (_req, _file, cb) => cb(null, TEMP_DIR),
     filename: (_req, file, cb) => {
       const ext = path.extname(file.originalname);
       cb(null, `${newId()}${ext}`);
@@ -93,6 +92,9 @@ companyDocumentRouter.post(
 
     const docId = newId();
     const actor = actorId(req);
+
+    // Upload via storage layer (local or Google Drive) — folder: Shared/Company
+    const result = await storageUpload(file, 'company');
     const row = await prisma.companyDocument.create({
       data: {
         id: docId,
@@ -100,7 +102,7 @@ companyDocumentRouter.post(
         fileName: file.originalname,
         mimeType: file.mimetype,
         fileSize: file.size,
-        storagePath: path.basename(file.path),
+        storagePath: result.storagePath,
         sortOrder: nextOrder,
         createdBy: actor,
         updatedBy: actor,
@@ -149,14 +151,11 @@ companyDocumentRouter.get(
     });
     if (!doc) throw errors.notFound('Document not found');
 
-    const filePath = path.join(UPLOAD_DIR, doc.storagePath);
-    if (!fs.existsSync(filePath)) {
-      throw errors.notFound('File not found on disk');
-    }
-
     res.setHeader('Content-Disposition', `inline; filename="${doc.fileName}"`);
     res.setHeader('Content-Type', doc.mimeType);
-    res.sendFile(filePath);
+
+    const { stream } = await downloadFileWithFallback(doc.storagePath, LEGACY_DIR);
+    (stream as NodeJS.ReadableStream).pipe(res);
   }),
 );
 
@@ -183,13 +182,12 @@ companyDocumentRouter.patch(
     }
 
     if (req.file) {
-      const oldPath = path.join(UPLOAD_DIR, doc.storagePath);
-      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
-
+      try { await deleteFileWithFallback(doc.storagePath, LEGACY_DIR); } catch { /* best effort */ }
+      const result = await storageUpload(req.file, 'company');
       data.fileName = req.file.originalname;
       data.mimeType = req.file.mimetype;
       data.fileSize = req.file.size;
-      data.storagePath = path.basename(req.file.path);
+      data.storagePath = result.storagePath;
     }
 
     const updated = await prisma.companyDocument.update({

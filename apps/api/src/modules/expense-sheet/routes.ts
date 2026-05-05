@@ -2,19 +2,22 @@ import { Router, type Router as ExpressRouter } from 'express';
 import { z } from 'zod';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import multer from 'multer';
 import { requireAuth } from '../../middleware/auth.js';
 import { asyncHandler, validate } from '../../middleware/validate.js';
 import { recordAudit } from '../../middleware/audit.js';
 import { prisma, newId } from '../../lib/prisma.js';
 import { errors } from '../../middleware/error-handler.js';
+import { uploadFile as storageUpload, downloadFileWithFallback, deleteFileWithFallback } from '../../lib/dms-storage.js';
 
-const UPLOAD_DIR = path.resolve(process.cwd(), '../../uploads/expense-sheets');
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+const LEGACY_DIR = path.resolve(process.cwd(), '../../uploads/expense-sheets');
+const TEMP_DIR = path.join(os.tmpdir(), 'govprojects-expense');
+if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    destination: (_req, _file, cb) => cb(null, TEMP_DIR),
     filename: (_req, file, cb) => cb(null, `${newId()}${path.extname(file.originalname)}`),
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -336,6 +339,11 @@ expenseSheetRouter.post('/:id/lines', upload.single('file'), asyncHandler(async 
   if (!parsed.success) { if (req.file) fs.unlinkSync(req.file.path); throw errors.validation(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ')); }
 
   const actor = actorId(req);
+  let attachmentPath: string | null = null;
+  if (req.file) {
+    const result = await storageUpload(req.file, `expense:${sheetId}`);
+    attachmentPath = result.storagePath;
+  }
   const row = await prisma.expenseLine.create({
     data: {
       id: newId(), sheetId, category: parsed.data.category,
@@ -343,7 +351,7 @@ expenseSheetRouter.post('/:id/lines', upload.single('file'), asyncHandler(async 
       vendorName: parsed.data.vendorName ?? null, description: parsed.data.description,
       amountPaise: BigInt(parsed.data.amountPaise), gstPaise: BigInt(parsed.data.gstPaise),
       paymentMode: parsed.data.paymentMode,
-      attachmentName: req.file?.originalname ?? null, attachmentPath: req.file?.filename ?? null,
+      attachmentName: req.file?.originalname ?? null, attachmentPath,
       createdBy: actor, updatedBy: actor,
     },
   });
@@ -372,11 +380,12 @@ expenseSheetRouter.patch('/:id/lines/:lineId', upload.single('file'), asyncHandl
   if (body.paymentMode !== undefined) data.paymentMode = body.paymentMode;
 
   if (req.file) {
-    if (line.attachmentPath) { const old = path.join(UPLOAD_DIR, line.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
-    data.attachmentName = req.file.originalname; data.attachmentPath = req.file.filename;
+    if (line.attachmentPath) { try { await deleteFileWithFallback(line.attachmentPath, LEGACY_DIR); } catch { /* best effort */ } }
+    const result = await storageUpload(req.file, `expense:${sheetId}`);
+    data.attachmentName = req.file.originalname; data.attachmentPath = result.storagePath;
   }
   if (body.removeAttachment === 'true' && !req.file) {
-    if (line.attachmentPath) { const old = path.join(UPLOAD_DIR, line.attachmentPath); if (fs.existsSync(old)) fs.unlinkSync(old); }
+    if (line.attachmentPath) { try { await deleteFileWithFallback(line.attachmentPath, LEGACY_DIR); } catch { /* best effort */ } }
     data.attachmentName = null; data.attachmentPath = null;
   }
 
@@ -389,7 +398,7 @@ expenseSheetRouter.patch('/:id/lines/:lineId', upload.single('file'), asyncHandl
 expenseSheetRouter.delete('/:id/lines/:lineId', validate({ params: LineIdParams }), asyncHandler(async (req, res) => {
   const line = await prisma.expenseLine.findFirst({ where: { id: req.params.lineId as string, sheetId: req.params.id as string, deletedAt: null } });
   if (!line) throw errors.notFound('Line not found');
-  if (line.attachmentPath) { const fp = path.join(UPLOAD_DIR, line.attachmentPath); if (fs.existsSync(fp)) fs.unlinkSync(fp); }
+  if (line.attachmentPath) { try { await deleteFileWithFallback(line.attachmentPath, LEGACY_DIR); } catch { /* best effort */ } }
   await prisma.expenseLine.update({ where: { id: line.id }, data: { deletedAt: new Date() } });
   await recalcTotal(line.sheetId);
   res.status(204).end();
@@ -400,7 +409,8 @@ expenseSheetRouter.get('/:id/lines/:lineId/download', validate({ params: LineIdP
   const line = await prisma.expenseLine.findFirst({ where: { id: req.params.lineId as string, sheetId: req.params.id as string, deletedAt: null } });
   if (!line) throw errors.notFound('Line not found');
   if (!line.attachmentPath) throw errors.notFound('No attachment');
-  const fp = path.join(UPLOAD_DIR, line.attachmentPath);
-  if (!fs.existsSync(fp)) throw errors.notFound('File not found on disk');
-  res.download(fp, line.attachmentName ?? line.attachmentPath);
+  const fileName = line.attachmentName ?? line.attachmentPath;
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  const { stream } = await downloadFileWithFallback(line.attachmentPath, LEGACY_DIR);
+  (stream as NodeJS.ReadableStream).pipe(res);
 }));

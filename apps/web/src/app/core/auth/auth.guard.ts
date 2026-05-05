@@ -10,6 +10,11 @@ export const authGuard: CanActivateFn = () => {
     take(1),
     map(({ isAuthenticated }) => {
       if (isAuthenticated) return true;
+      // Save current URL so callback can restore it after login
+      const url = window.location.pathname + window.location.search;
+      if (url && !url.startsWith('/callback')) {
+        sessionStorage.setItem('post_login_redirect', url);
+      }
       oidc.authorize();
       return false;
     })

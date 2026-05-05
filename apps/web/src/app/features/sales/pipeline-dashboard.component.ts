@@ -15,7 +15,7 @@ interface LookupItem { label: string; value: string; isActive?: boolean; }
 interface OppRow {
   id: string; title: string; stage: string; entryPath: string;
   contractValuePaise: number | null; probabilityPct: number | null;
-  submissionDue: string | null;
+  submissionDue: string | null; expectedCloseMonth: string | null;
   businessUnitId: string; businessUnitName: string | null;
   accountId: string | null; accountName: string | null;
   ownerUserId: string | null; ownerName: string | null;
@@ -24,6 +24,7 @@ interface PipelineData {
   summary: { totalOpportunities: number; totalContractValuePaise: number; weightedPipelineValuePaise: number };
   byStage: Array<{ stage: string; count: number; totalValuePaise: number; weightedValuePaise: number }>;
   byBu: Array<{ buId: string; buName: string; count: number; totalValuePaise: number; weightedValuePaise: number }>;
+  byCloseMonth: Array<{ closeMonth: string; count: number; totalValuePaise: number; weightedValuePaise: number }>;
   opportunities: OppRow[];
 }
 interface OrdersData {
@@ -124,6 +125,14 @@ interface OrdersData {
         </div>
       </div>
 
+      <!-- Chart Row 3: Pipeline by Expected Close Month -->
+      @if (closeMonthChart() && closeMonthChart()['labels']) {
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+          <h3 class="text-md font-semibold text-gray-700 mb-4">Pipeline by Expected Close Month</h3>
+          <p-chart type="bar" [data]="closeMonthChart()" [options]="closeMonthBarOptions" height="300px" />
+        </div>
+      }
+
       <!-- Summary: Orders Booked -->
       @if (orders() && orders()!.summary.totalOrders > 0) {
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -146,7 +155,7 @@ interface OrdersData {
             <tr>
               <th>Title</th><th>Account</th><th>BU</th><th>Stage</th>
               <th class="text-right">Value (₹)</th><th class="text-right">Prob%</th>
-              <th class="text-right">Weighted (₹)</th><th>Owner</th><th>Due</th>
+              <th class="text-right">Weighted (₹)</th><th>Owner</th><th>Close Month</th>
             </tr>
           </ng-template>
           <ng-template pTemplate="body" let-opp>
@@ -159,7 +168,11 @@ interface OrdersData {
               <td class="text-right">{{ opp.probabilityPct ?? '-' }}%</td>
               <td class="text-right font-medium">{{ formatLakhs(weightedValue(opp)) }}</td>
               <td>{{ opp.ownerName || '-' }}</td>
-              <td>{{ opp.submissionDue | date:'mediumDate' }}</td>
+              <td>
+                @if (opp.expectedCloseMonth) {
+                  <span class="text-sm font-medium" [class]="closeMonthClass(opp.expectedCloseMonth)">{{ formatCloseMonth(opp.expectedCloseMonth) }}</span>
+                } @else { - }
+              </td>
             </tr>
           </ng-template>
           <ng-template pTemplate="emptymessage">
@@ -177,6 +190,7 @@ export class PipelineDashboardComponent implements OnInit {
   pipeline = signal<PipelineData | null>(null);
   orders = signal<OrdersData | null>(null);
   loading = signal(true);
+  closeMonthChart = signal<Record<string, unknown>>({});
 
   buOptions = signal<Ref[]>([]);
   stageOptions = signal<LookupItem[]>([]);
@@ -231,7 +245,7 @@ export class PipelineDashboardComponent implements OnInit {
     const qs = params.length > 0 ? `?${params.join('&')}` : '';
 
     this.http.get<{ data: PipelineData }>(`${environment.apiBaseUrl}/opportunities/pipeline${qs}`).subscribe({
-      next: (r) => { this.pipeline.set(r.data); this.loading.set(false); },
+      next: (r) => { this.pipeline.set(r.data); this.buildCloseMonthChart(r.data); this.loading.set(false); },
       error: () => { this.loading.set(false); },
     });
 
@@ -313,6 +327,77 @@ export class PipelineDashboardComponent implements OnInit {
     };
   }
 
+  closeMonthBarOptions = {
+    plugins: {
+      legend: { position: 'bottom' as const },
+      tooltip: {
+        callbacks: {
+          label: (ctx: { dataset: { label: string }; raw: number }) =>
+            `${ctx.dataset.label}: ₹${this.formatCroresShort(ctx.raw)}`,
+        },
+      },
+    },
+    scales: {
+      x: { stacked: true },
+      y: { stacked: true, beginAtZero: true, ticks: { callback: (v: number) => this.formatCroresShort(v) } },
+    },
+    maintainAspectRatio: false,
+  };
+
+  private buildCloseMonthChart(p: PipelineData): void {
+    if (!p.byCloseMonth || p.byCloseMonth.length === 0) { this.closeMonthChart.set({}); return; }
+
+    // Build a lookup from API data
+    const dataMap = new Map<string, { total: number; weighted: number }>();
+    for (const m of p.byCloseMonth) {
+      dataMap.set(m.closeMonth, { total: m.totalValuePaise / 100, weighted: m.weightedValuePaise / 100 });
+    }
+
+    // Fill all months from current month to the last month in data
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const lastMonth = p.byCloseMonth[p.byCloseMonth.length - 1]!.closeMonth;
+    const startMonth = currentMonth < (p.byCloseMonth[0]?.closeMonth ?? currentMonth) ? currentMonth : p.byCloseMonth[0]!.closeMonth;
+    const endMonth = lastMonth > currentMonth ? lastMonth : currentMonth;
+
+    const allMonths: string[] = [];
+    let [sy, sm] = (startMonth < currentMonth ? startMonth : currentMonth).split('-').map(Number);
+    const [ey, em] = endMonth.split('-').map(Number);
+    while (sy! < ey! || (sy === ey && sm! <= em!)) {
+      allMonths.push(`${sy}-${String(sm).padStart(2, '0')}`);
+      sm!++;
+      if (sm! > 12) { sm = 1; sy!++; }
+    }
+
+    const labels = allMonths.map((m) => {
+      const [y, mon] = m.split('-');
+      return new Date(Number(y), Number(mon) - 1).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+    });
+
+    // Stacked: weighted portion (green) at bottom, unweighted remainder (blue) on top
+    const weightedData = allMonths.map((m) => dataMap.get(m)?.weighted ?? 0);
+    const remainderData = allMonths.map((m) => {
+      const d = dataMap.get(m);
+      return d ? d.total - d.weighted : 0;
+    });
+
+    this.closeMonthChart.set({
+      labels,
+      datasets: [
+        {
+          label: 'Weighted Value',
+          data: weightedData,
+          backgroundColor: '#10B981',
+        },
+        {
+          label: 'Unweighted Remainder',
+          data: remainderData,
+          backgroundColor: '#93C5FD',
+        },
+      ],
+    });
+  }
+
   ordersStackedChartData() {
     const o = this.orders();
     if (!o || o.byMonthBu.length === 0) return {};
@@ -338,6 +423,23 @@ export class PipelineDashboardComponent implements OnInit {
     }));
 
     return { labels: monthLabels, datasets };
+  }
+
+  formatCloseMonth(m: string): string {
+    const [y, mon] = m.split('-');
+    return new Date(Number(y), Number(mon) - 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  }
+
+  closeMonthClass(m: string): string {
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (m < currentMonth) return 'text-red-600';
+    if (m === currentMonth) return 'text-green-600';
+    const [y, mon] = m.split('-').map(Number);
+    const mQ = Math.ceil(mon! / 3);
+    const nowQ = Math.ceil((now.getMonth() + 1) / 3);
+    if (y === now.getFullYear() && mQ === nowQ) return 'text-orange-500';
+    return '';
   }
 
   goToOpp(id: string): void { this.router.navigate(['/sales/opportunities', id]); }

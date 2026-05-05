@@ -16,6 +16,7 @@ import { businessUnitRouter } from './modules/organization/business-unit/routes.
 import { buMembersRouter } from './modules/organization/business-unit/members.routes.js';
 import { companyRouter } from './modules/admin/company/routes.js';
 import { companyDocumentRouter } from './modules/admin/company/document.routes.js';
+import { documentRouter } from './modules/documents/routes.js';
 import { bankAccountRouter } from './modules/admin/company/bank-account.routes.js';
 import { configRouter } from './modules/admin/config/routes.js';
 import { statutoryRouter } from './modules/admin/statutory/routes.js';
@@ -39,6 +40,7 @@ import { tenderListRouter } from './modules/tender/routes.js';
 import { finTravelExpensesRouter } from './modules/finance/travel-expenses.routes.js';
 import { expenseSheetRouter } from './modules/expense-sheet/routes.js';
 import { mailRouter } from './modules/mail/routes.js';
+import { aiRulesRouter } from './modules/admin/ai-rules/routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -93,6 +95,7 @@ export function createApp(): Express {
   // Module routers
   app.use('/api/v1/company', companyRouter);
   app.use('/api/v1/company-documents', companyDocumentRouter);
+  app.use('/api/v1/documents', documentRouter);
   app.use('/api/v1/bank-accounts', bankAccountRouter);
   app.use('/api/v1/config', configRouter);
   app.use('/api/v1/statutory-registrations', statutoryRouter);
@@ -131,6 +134,9 @@ export function createApp(): Express {
 
   // Mail
   app.use('/api/v1/mail', mailRouter);
+
+  // AI Analysis Rules
+  app.use('/api/v1/ai-rules', aiRulesRouter);
 
   // Finance
   app.use('/api/v1/finance/travel-expenses', finTravelExpensesRouter);

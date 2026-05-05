@@ -2,7 +2,7 @@
 
 Tracks what's shipped, in progress, and queued. Claude Code should update this at the end of each feature.
 
-_Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Capacitor) scaffolded with Activities/Calendar/Travel Plans_
+_Last updated: 2026-04-29 — Session 10: Google Drive DMS migration, Bid Evaluation (PQ + Technical scoring), mail attachment to DMS, document browser UX_
 
 ## Status legend
 
@@ -131,7 +131,8 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 | Tender list page | 🟢 | `/bid-management/tenders` — filters (status, type, BU, search), summary cards, sortable table with deadline highlighting |
 | Tender detail page | 🟢 | 3-column layout (identity, financial, dates), linked opportunity card, notes/corrigendum |
 | Tender documents | 🟢 | Upload/download/delete. Types: RFP, Corrigendum, Addendum, BOQ, Drawing, Pre-Bid Minutes, Clarification, Other. Grouped by type. |
-| AI RFP Analysis (Gemini) | 🟢 | Upload RFP → "Analyze RFP" → Gemini extracts: summary, GO/NO-GO, scope, evaluation, eligibility, risks, special conditions. Persisted in DB. Collapsible UI. Re-analyze only when docs change. |
+| AI RFP Analysis (Gemini) | 🟢 | Upload RFP → "Analyze RFP" → Gemini extracts: summary, GO/NO-GO, scope, evaluation, eligibility, risks, special conditions, **PQ criteria**, **technical scoring**. Persisted in DB. Collapsible UI. Re-analyze only when docs change. GDrive-stored docs supported. |
+| Bid Evaluation (PQ + Technical) | 🟢 | AI-extracted or manual PQ criteria table (meets/doesn't meet toggle per criterion). Technical scoring table with sections, sub-criteria, max marks, expected scores. Threshold banner (green/red). Go/No-Go decision. `bidEvaluation` JSON field on Tender. |
 | Opportunity closedStatus | 🟢 | WON/LOST/CANCELLED/ON_HOLD. Pipeline filters to open only. |
 | Orders Booked chart | 🟢 | Stacked bar (by BU, last 12 months) + Weighted Pipeline pie on Sales Pipeline page |
 
@@ -158,8 +159,12 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 | Opportunity list filters | 🟢 | Open/Closed/All toggle (default: Open), BU filter, Account filter. Default stage: lowercase 'capture'. |
 | Close & Add New (Activities) | 🟢 | Edit task → set Closed → "Close & Add New" button closes task and opens pre-filled create form (category, assignee, contacts, linked objects). |
 | Initiative entity linking | 🟢 | Activities + Emails linkable to INITIATIVE. Activity list/calendar entity type dropdowns, mail API LINK_ENTITY_TYPES, mail-reader entity linking UI. |
-| Mail: Move between folders | 🟢 | Generic POST /move-messages endpoint. "Move to" popup menu in inbox toolbar + email reader header. |
+| Mail: Move between folders | 🟡 | Code in place (API + UI) but not working correctly. On hold — needs IMAP move debugging. |
 | Mail: AI Email Assistant | 🟢 | Collapsible AI section in email detail. Auto-summarize on expand via Gemini, cached in DB (ai_summary field). Draft reply with optional user prompt. "Use as Reply" opens compose. |
+| Mail: Save attachment to DMS | 🟢 | "Save to Documents" button on each email attachment. Dialog: pick folder from DMS tree, optional entity link. API streams from IMAP → uploads to GDrive → creates Document record. |
+| Google Drive DMS | 🟢 | All document storage migrated to Google Drive via OAuth. Folder structure: Shared/{Company,Tenders,Projects,Expenses,Travel}, Private/{User}. All upload/download routes use dms-storage layer. Migration script for existing files. |
+| Document Browser enhancements | 🟢 | Wider folder tree (432px). View files in browser (not just download). Loading spinner on file fetch. Delete empty folders. Linked Entities panel close button. |
+| Activity linked entity visibility | 🟢 | Fixed "Linked To" column invisible on dark theme — now uses PrimeNG p-tag with severity="secondary". |
 
 ## R10 — Remaining Organization Masters & Platform Hardening
 
@@ -189,6 +194,12 @@ _Last updated: 2026-04-19 — R3 Execution Core shipped, Mobile App (Ionic + Cap
 | Go / No-Go workflow | 🔲 | FR-2.9 — eligibility, conflict check |
 | Solution & Proposal workspace | 🔲 | FR-2.11 — BoQ, pricing, compliance matrix |
 | Bid Submission | 🔲 | FR-2.12 — EMD/BG, signed pack upload |
+
+## Backlog (bugs / on-hold)
+
+| Item | Status | Notes |
+|---|---|---|
+| Mail: Move between folders | 🟡 | Code in place (API POST /move-messages + UI "Move to" menu) but IMAP move not working. Needs debugging. |
 
 ## Next up (top of queue)
 

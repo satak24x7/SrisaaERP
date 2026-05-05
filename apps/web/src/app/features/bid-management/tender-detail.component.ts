@@ -15,6 +15,8 @@ import { TextareaModule } from 'primeng/textarea';
 import { FileUploadModule } from 'primeng/fileupload';
 import { TooltipModule } from 'primeng/tooltip';
 import { ConfirmDialogModule } from 'primeng/confirmdialog';
+import { TableModule } from 'primeng/table';
+import { ProgressBarModule } from 'primeng/progressbar';
 import { MessageService, ConfirmationService } from 'primeng/api';
 import { environment } from '../../../environments/environment';
 
@@ -35,6 +37,7 @@ interface AiAnalysis {
   evaluation: { method: string | null; technicalWeightPct: number | null; financialWeightPct: number | null; minimumTechnicalScore: number | null; evaluationCriteria: string[] };
   specialConditions: string[]; risks: string[];
   keyPersonnel: string[]; deliverables: string[];
+  riskFlags: Array<{ ruleTitle: string; category: string; severity: string; finding: string; clause: string | null; impact: string }>;
   [key: string]: any;
 }
 
@@ -71,7 +74,7 @@ interface TenderDetail {
   selector: 'app-tender-detail',
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule, FormsModule, RouterLink, ButtonModule, InputTextModule, InputNumberModule,
-    SelectModule, TagModule, DialogModule, ToastModule, DatePickerModule, TextareaModule, FileUploadModule, ConfirmDialogModule, TooltipModule],
+    SelectModule, TagModule, DialogModule, ToastModule, DatePickerModule, TextareaModule, FileUploadModule, ConfirmDialogModule, TooltipModule, TableModule, ProgressBarModule],
   providers: [MessageService, ConfirmationService],
   template: `
     <p-toast />
@@ -94,14 +97,10 @@ interface TenderDetail {
           }
         </div>
         <div class="flex gap-2">
-          @if (docsChangedSinceAnalysis()) {
-            <p-button [label]="aiAnalysis() ? 'Re-analyze RFP' : 'Analyze RFP'" icon="pi pi-sparkles" severity="help"
-                      [outlined]="!!aiAnalysis()" (onClick)="analyzeRfp()" [loading]="analyzing" [disabled]="analyzing || documents().length === 0"
-                      [pTooltip]="documents().length === 0 ? 'Upload RFP documents first' : ''" />
-          } @else {
-            <p-button label="Analysis Up to Date" icon="pi pi-check-circle" severity="secondary" [outlined]="true" [disabled]="true"
-                      pTooltip="Documents haven't changed since last analysis" />
-          }
+          <p-button [label]="aiAnalysis() ? 'Re-analyze RFP' : 'Analyze RFP'" icon="pi pi-sparkles" severity="help"
+                    [outlined]="!!aiAnalysis()" (onClick)="analyzeRfp()" [loading]="analyzing" [disabled]="analyzing || documents().length === 0"
+                    [pTooltip]="documents().length === 0 ? 'Upload RFP documents first' : (!docsChangedSinceAnalysis() ? 'Documents unchanged — click to force re-analysis' : '')" />
+          <p-button label="Commercial Terms" icon="pi pi-chart-line" severity="info" [outlined]="true" [routerLink]="['/bid-management/tenders', tender()!.id, 'cash-flow-plan']" />
           <p-button label="Edit" icon="pi pi-pencil" (onClick)="openEditDialog()" />
         </div>
       </div>
@@ -119,6 +118,9 @@ interface TenderDetail {
                 [value]="aiAnalysis()!.recommendation"
                 [severity]="aiAnalysis()!.recommendation === 'GO' ? 'success' : aiAnalysis()!.recommendation === 'NO-GO' ? 'danger' : 'warn'"
                 [style]="{'font-size':'0.85rem','padding':'4px 12px'}" />
+              @if (aiAnalysis()!.riskFlags?.length) {
+                <span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium"><i class="pi pi-shield text-xs mr-1"></i>{{ aiAnalysis()!.riskFlags.length }} risk flag{{ aiAnalysis()!.riskFlags.length > 1 ? 's' : '' }}</span>
+              }
               @if (tender()!.aiAnalyzedAt) {
                 <span class="text-xs text-gray-400 ml-2">{{ tender()!.aiAnalyzedAt | date:'medium' }}</span>
               }
@@ -197,6 +199,45 @@ interface TenderDetail {
                 </div>
               </div>
 
+              <!-- Risk Flags (from configurable AI Rules) -->
+              @if (aiAnalysis()!.riskFlags?.length) {
+                <div class="mb-4">
+                  <div class="flex items-center gap-2 mb-3">
+                    <i class="pi pi-shield text-red-600"></i>
+                    <h4 class="text-sm font-semibold text-gray-800">Risk Assessment</h4>
+                    <span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">{{ aiAnalysis()!.riskFlags.length }} flag{{ aiAnalysis()!.riskFlags.length > 1 ? 's' : '' }}</span>
+                  </div>
+                  <div class="space-y-2">
+                    @for (flag of aiAnalysis()!.riskFlags; track $index) {
+                      <div class="rounded-lg p-3 border"
+                           [class]="flag.severity === 'HIGH' ? 'bg-red-50 border-red-200' : flag.severity === 'MEDIUM' ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'">
+                        <div class="flex items-start gap-2">
+                          <i class="pi mt-0.5"
+                             [class]="flag.severity === 'HIGH' ? 'pi-exclamation-triangle text-red-600' : flag.severity === 'MEDIUM' ? 'pi-exclamation-circle text-amber-600' : 'pi-info-circle text-blue-600'"></i>
+                          <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                              <span class="text-sm font-semibold"
+                                    [class]="flag.severity === 'HIGH' ? 'text-red-800' : flag.severity === 'MEDIUM' ? 'text-amber-800' : 'text-blue-800'">{{ flag.ruleTitle }}</span>
+                              <span class="text-xs px-1.5 py-0.5 rounded font-medium"
+                                    [class]="flag.severity === 'HIGH' ? 'bg-red-200 text-red-700' : flag.severity === 'MEDIUM' ? 'bg-amber-200 text-amber-700' : 'bg-blue-200 text-blue-700'">{{ flag.severity }}</span>
+                              <span class="text-xs text-gray-400">{{ flag.category }}</span>
+                              @if (flag.clause) {
+                                <span class="text-xs text-gray-500 font-mono">{{ flag.clause }}</span>
+                              }
+                            </div>
+                            <p class="text-sm"
+                               [class]="flag.severity === 'HIGH' ? 'text-red-700' : flag.severity === 'MEDIUM' ? 'text-amber-700' : 'text-blue-700'">{{ flag.finding }}</p>
+                            @if (flag.impact) {
+                              <p class="text-xs text-gray-500 mt-1"><span class="font-medium">Impact:</span> {{ flag.impact }}</p>
+                            }
+                          </div>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                </div>
+              }
+
               <!-- Risks & Special Conditions -->
               <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 @if (aiAnalysis()!.risks?.length) {
@@ -215,6 +256,265 @@ interface TenderDetail {
                     </ul>
                   </div>
                 }
+              </div>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Bid Evaluation Card (Collapsible) — always visible -->
+      @if (tender()) {
+        <div class="rounded-lg shadow-sm border border-blue-300 mb-6 overflow-hidden">
+          <div (click)="bidEvalExpanded = !bidEvalExpanded"
+               class="flex items-center justify-between px-6 py-4 cursor-pointer bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 transition-colors">
+            <div class="flex items-center gap-3">
+              <i class="pi pi-check-square text-blue-600"></i>
+              <span class="font-semibold text-gray-800">Bid Evaluation</span>
+              @if (bidEvalDecision) {
+                <p-tag [value]="bidEvalDecision" [severity]="bidEvalDecision === 'GO' ? 'success' : bidEvalDecision === 'NO_GO' ? 'danger' : 'warn'" />
+              }
+              @if (totalExpectedScore() !== null) {
+                <span class="text-sm text-gray-500 ml-2">Score: {{ totalExpectedScore() }}/{{ aiTechEval()?.totalMarks ?? '?' }}</span>
+              }
+            </div>
+            <i [class]="bidEvalExpanded ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" class="text-gray-400"></i>
+          </div>
+
+          @if (bidEvalExpanded) {
+            <div class="p-6 bg-white space-y-6">
+              <!-- Threshold Banner -->
+              @if (aiTechEval()?.minimumQualifyingScore && totalExpectedScore() !== null) {
+                <div class="rounded-lg p-4 flex items-center gap-4"
+                  [class]="totalExpectedScore()! >= aiTechEval()!.minimumQualifyingScore! ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'">
+                  <i [class]="totalExpectedScore()! >= aiTechEval()!.minimumQualifyingScore! ? 'pi pi-check-circle text-green-600 text-2xl' : 'pi pi-times-circle text-red-600 text-2xl'"></i>
+                  <div>
+                    <div class="font-semibold" [class]="totalExpectedScore()! >= aiTechEval()!.minimumQualifyingScore! ? 'text-green-800' : 'text-red-800'">
+                      Expected Technical Score: {{ totalExpectedScore() }} / {{ aiTechEval()!.totalMarks }}
+                      (Minimum: {{ aiTechEval()!.minimumQualifyingScore }})
+                    </div>
+                    <div class="text-sm" [class]="totalExpectedScore()! >= aiTechEval()!.minimumQualifyingScore! ? 'text-green-600' : 'text-red-600'">
+                      {{ totalExpectedScore()! >= aiTechEval()!.minimumQualifyingScore! ? 'LIKELY TO QUALIFY' : 'BELOW THRESHOLD — Review scores or consider NO-GO' }}
+                    </div>
+                  </div>
+                </div>
+              }
+
+              <!-- Tab: Pre-Qualification -->
+              <div>
+                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <i class="pi pi-list-check text-blue-600"></i> Pre-Qualification Criteria
+                  @if (pqCriteria().length > 0) {
+                    <span class="text-xs font-normal text-gray-400">{{ pqMetCount() }} of {{ pqMandatoryCount() }} mandatory met</span>
+                  }
+                  <p-button icon="pi pi-plus" label="Add Criterion" size="small" [outlined]="true" (onClick)="addPqRow()" class="ml-auto" />
+                </h4>
+                @if (pqCriteria().length > 0) {
+                  <p-table [value]="pqCriteria()" styleClass="p-datatable-sm p-datatable-gridlines" [scrollable]="true">
+                    <ng-template pTemplate="header">
+                      <tr>
+                        <th style="width:40px">#</th>
+                        <th>Criterion</th>
+                        <th style="width:100px">Category</th>
+                        <th style="width:90px">Mandatory</th>
+                        <th style="width:90px">Meets?</th>
+                        <th style="width:200px">Remarks</th>
+                      </tr>
+                    </ng-template>
+                    <ng-template pTemplate="body" let-pq let-i="rowIndex">
+                      <tr [class]="getPqRowClass(pq)">
+                        <td>{{ i + 1 }}</td>
+                        <td>
+                          @if (pq._manual) {
+                            <input pInputText [(ngModel)]="pq.criterion" class="w-full text-sm p-1 mb-1" placeholder="Criterion..." (blur)="markBidEvalDirty()" />
+                            <input pInputText [(ngModel)]="pq.requirement" class="w-full text-xs p-1" placeholder="Requirement detail..." (blur)="markBidEvalDirty()" />
+                          } @else {
+                            <div class="font-medium text-sm">{{ pq.criterion }}</div>
+                            @if (pq.requirement && pq.requirement !== pq.criterion) {
+                              <div class="text-xs text-gray-500 mt-0.5">{{ pq.requirement }}</div>
+                            }
+                            @if (pq.referenceClause) { <div class="text-xs text-gray-400">{{ pq.referenceClause }}</div> }
+                          }
+                        </td>
+                        <td><p-tag [value]="pq.category" severity="secondary" [style]="{'font-size':'0.65rem'}" /></td>
+                        <td class="text-center">
+                          @if (pq.isMandatory) { <i class="pi pi-check-circle text-red-500" pTooltip="Mandatory"></i> }
+                          @else { <span class="text-gray-400 text-xs">Optional</span> }
+                        </td>
+                        <td class="text-center">
+                          <button class="px-3 py-1 rounded text-xs font-medium border transition-colors"
+                            [class]="getPqBtnClass(pq)"
+                            (click)="togglePqMeets(pq)">
+                            {{ pq._meets === true ? 'YES' : pq._meets === false ? 'NO' : '—' }}
+                          </button>
+                        </td>
+                        <td>
+                          <input pInputText [(ngModel)]="pq._remarks" class="w-full text-xs p-1" placeholder="Notes..." (blur)="markBidEvalDirty()" />
+                        </td>
+                      </tr>
+                    </ng-template>
+                  </p-table>
+                }
+                @if (pqCriteria().length === 0) {
+                  <div class="text-center py-6 text-gray-400 text-sm">No PQ criteria yet. Click "Add Criterion" above, or analyze the RFP.</div>
+                }
+              </div>
+
+              <!-- Tab: Technical Scoring -->
+              <div>
+                <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <i class="pi pi-chart-bar text-indigo-600"></i> Technical Evaluation Scoring
+                  @if (aiTechEval()) {
+                    <span class="text-xs font-normal text-gray-400">Total: {{ aiTechEval()!.totalMarks }} marks</span>
+                  }
+                  <p-button icon="pi pi-plus" label="Add Section" size="small" [outlined]="true" (onClick)="addTechSection()" class="ml-auto" />
+                </h4>
+                  <!-- Progress bar -->
+                  @if (aiTechEval()!.minimumQualifyingScore) {
+                    <div class="mb-3">
+                      <p-progressBar [value]="scorePercentage()" [showValue]="false"
+                        [style]="{'height':'8px'}"
+                        [color]="totalExpectedScore()! >= aiTechEval()!.minimumQualifyingScore! ? '#22c55e' : '#ef4444'" />
+                      <div class="flex justify-between text-xs text-gray-500 mt-1">
+                        <span>0</span>
+                        <span class="text-orange-600 font-medium">Min: {{ aiTechEval()!.minimumQualifyingScore }}</span>
+                        <span>{{ aiTechEval()!.totalMarks }}</span>
+                      </div>
+                    </div>
+                  }
+                @if (techSections().length > 0) {
+                  <table class="w-full text-sm border-collapse">
+                    <thead>
+                      <tr class="bg-gray-50 border-b border-gray-200 text-left">
+                        <th class="px-3 py-2 w-10">#</th>
+                        <th class="px-3 py-2">Section / Criterion</th>
+                        <th class="px-3 py-2 w-20 text-center">Max</th>
+                        <th class="px-3 py-2" style="min-width:220px">Scoring</th>
+                        <th class="px-3 py-2 w-24 text-center">Score</th>
+                        <th class="px-3 py-2 w-44">Remarks</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (sec of techSections(); track sec.sectionId) {
+                        <!-- Section header row -->
+                        <tr class="bg-indigo-50 border-b border-indigo-200">
+                          <td class="px-3 py-2 font-semibold text-gray-600">{{ sec.num }}</td>
+                          <td class="px-3 py-2">
+                            <div class="flex items-center gap-2">
+                              <span class="font-semibold text-gray-800">
+                                @if (sec._manual) {
+                                  <input pInputText [(ngModel)]="sec.label" class="text-sm p-1 w-48" placeholder="Section name..." (blur)="markBidEvalDirty()" />
+                                } @else {
+                                  {{ sec.label }}
+                                }
+                              </span>
+                              @if (sec.referenceClause) {
+                                <span class="text-xs text-gray-400">({{ sec.referenceClause }})</span>
+                              }
+                              @if (sec.subCriteria.length > 1) {
+                                <button (click)="toggleSectionMode(sec)" class="ml-auto text-xs px-2 py-0.5 rounded border transition-colors"
+                                  [class]="sec._expanded ? 'border-indigo-300 bg-indigo-100 text-indigo-700' : 'border-gray-300 bg-white text-gray-500 hover:bg-gray-50'"
+                                  [pTooltip]="sec._expanded ? 'Switch to dropdown' : 'Score individually'" tooltipPosition="top">
+                                  <i class="pi text-xs mr-1" [class.pi-list]="!sec._expanded" [class.pi-th-large]="sec._expanded"></i>
+                                  {{ sec._expanded ? 'Itemized' : 'Dropdown' }}
+                                </button>
+                              }
+                            </div>
+                          </td>
+                          <td class="px-3 py-2 text-center font-semibold text-indigo-700">{{ sec.maxMarks }}</td>
+                          <td class="px-3 py-2">
+                            @if (!sec._expanded) {
+                              <!-- Dropdown mode -->
+                              @if (sec.subCriteria.length > 0) {
+                                <p-select appendTo="body"
+                                  [(ngModel)]="sec._selectedSubId"
+                                  [options]="sec.subCriteria"
+                                  optionLabel="description"
+                                  optionValue="id"
+                                  placeholder="Select scoring level..."
+                                  class="w-full"
+                                  [showClear]="true"
+                                  (onChange)="onSubCriterionSelected(sec)"
+                                >
+                                  <ng-template pTemplate="item" let-item>
+                                    <div class="flex justify-between w-full gap-2">
+                                      <span class="text-sm truncate">{{ item.description }}</span>
+                                      <span class="text-xs font-semibold text-indigo-600 shrink-0">{{ item.maxMarks }} marks</span>
+                                    </div>
+                                  </ng-template>
+                                  <ng-template pTemplate="selectedItem" let-item>
+                                    <div class="flex justify-between w-full gap-2">
+                                      <span class="text-sm truncate">{{ item.description }}</span>
+                                      <span class="text-xs font-semibold text-indigo-600 shrink-0">{{ item.maxMarks }} marks</span>
+                                    </div>
+                                  </ng-template>
+                                </p-select>
+                              } @else {
+                                <span class="text-xs text-gray-400 italic">No criteria</span>
+                              }
+                            }
+                          </td>
+                          <td class="px-3 py-2 text-center">
+                            <span class="font-semibold text-lg" [class]="getSectionScore(sec) > 0 ? 'text-indigo-700' : 'text-gray-300'">
+                              {{ getSectionScore(sec) }}
+                            </span>
+                          </td>
+                          <td class="px-3 py-2">
+                            @if (!sec._expanded) {
+                              <input pInputText [(ngModel)]="sec._remarks" class="w-full text-xs p-1" placeholder="Notes..." (blur)="markBidEvalDirty()" />
+                            }
+                          </td>
+                        </tr>
+                        <!-- Expanded: individual sub-criterion rows -->
+                        @if (sec._expanded) {
+                          @for (sub of sec.subCriteria; track sub.id; let si = $index) {
+                            <tr class="border-b border-gray-100 hover:bg-gray-50">
+                              <td class="px-3 py-1.5 text-gray-400 text-xs">{{ sec.num }}.{{ si + 1 }}</td>
+                              <td class="px-3 py-1.5 pl-8 text-gray-700">{{ sub.description }}</td>
+                              <td class="px-3 py-1.5 text-center text-gray-500">{{ sub.maxMarks }}</td>
+                              <td class="px-3 py-1.5 text-xs text-gray-400">{{ sub.scoringMethod ?? '' }}</td>
+                              <td class="px-3 py-1.5 text-center">
+                                <input pInputText type="number" [(ngModel)]="sub._score" class="w-16 text-center text-sm p-1"
+                                  [min]="0" [max]="sub.maxMarks" (blur)="onSubScoreChange(sec)" />
+                              </td>
+                              <td class="px-3 py-1.5">
+                                <input pInputText [(ngModel)]="sub._remarks" class="w-full text-xs p-1" placeholder="Notes..." (blur)="markBidEvalDirty()" />
+                              </td>
+                            </tr>
+                          }
+                        }
+                      }
+                    </tbody>
+                    <tfoot>
+                      <tr class="font-bold bg-gray-100 border-t-2 border-gray-300">
+                        <td class="px-3 py-2"></td>
+                        <td class="px-3 py-2">TOTAL</td>
+                        <td class="px-3 py-2 text-center">{{ aiTechEval()!.totalMarks }}</td>
+                        <td class="px-3 py-2"></td>
+                        <td class="px-3 py-2 text-center" [class]="totalExpectedScore()! >= (aiTechEval()!.minimumQualifyingScore ?? 0) ? 'text-green-700' : 'text-red-700'">
+                          {{ totalExpectedScore() }} / {{ aiTechEval()!.totalMarks }}
+                        </td>
+                        <td class="px-3 py-2"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                }
+                @if (techSections().length === 0) {
+                  <div class="text-center py-6 text-gray-400 text-sm">No technical scoring yet. Click "Add Section" above, or analyze the RFP.</div>
+                }
+              </div>
+
+              <!-- Go/No-Go Decision -->
+              <div class="border-t pt-4 flex items-end gap-4">
+                <div class="flex flex-col gap-1">
+                  <label class="text-sm font-medium text-gray-700">Decision</label>
+                  <p-select appendTo="body" [(ngModel)]="bidEvalDecision" [options]="decisionOpts" optionLabel="label" optionValue="value"
+                    placeholder="Select..." class="w-44" (onChange)="markBidEvalDirty()" />
+                </div>
+                <div class="flex-1 flex flex-col gap-1">
+                  <label class="text-sm font-medium text-gray-700">Remarks</label>
+                  <input pInputText [(ngModel)]="bidEvalRemarks" class="w-full" placeholder="Decision rationale..." (blur)="markBidEvalDirty()" />
+                </div>
+                <p-button label="Save Evaluation" icon="pi pi-save" (onClick)="saveBidEvaluation()" [loading]="savingBidEval" [disabled]="!bidEvalDirty" />
               </div>
             </div>
           }
@@ -513,6 +813,43 @@ export class TenderDetailComponent implements OnInit {
   saving = false;
   serverError = '';
 
+  // Bid Evaluation
+  bidEvalExpanded = false;
+  savingBidEval = false;
+  bidEvalDirty = false;
+  bidEvalDecision: string | null = null;
+  bidEvalRemarks = '';
+  pqCriteria = signal<Array<{ id: string; criterion: string; category: string; requirement: string; referenceClause: string | null; isMandatory: boolean; _meets: boolean | null; _remarks: string; _manual?: boolean }>>([]);
+  aiTechEval = signal<{ totalMarks: number; minimumQualifyingScore: number | null; minimumQualifyingPct: number | null; sections: Array<{ id: string; sectionName: string; maxMarks: number; referenceClause: string | null; subCriteria: Array<{ id: string; description: string; maxMarks: number; scoringMethod: string | null }> }> } | null>(null);
+  techSections = signal<Array<{
+    num: string; sectionId: string; label: string; maxMarks: number; referenceClause: string | null;
+    subCriteria: Array<{ id: string; description: string; maxMarks: number; scoringMethod: string | null; _score?: number | null; _remarks?: string }>;
+    _selectedSubId: string | null; _expectedScore: number | null; _remarks: string; _manual?: boolean;
+    _expanded: boolean;
+  }>>([]);
+  decisionOpts = [{ label: 'GO', value: 'GO' }, { label: 'NO-GO', value: 'NO_GO' }, { label: 'Conditional', value: 'CONDITIONAL' }];
+
+  totalExpectedScore = computed(() => {
+    const sections = this.techSections();
+    if (sections.length === 0) return null;
+    return sections.reduce((sum, s) => {
+      if (s._expanded) {
+        return sum + s.subCriteria.reduce((sub, c) => sub + (c._score ?? 0), 0);
+      }
+      return sum + (s._expectedScore ?? 0);
+    }, 0);
+  });
+
+  scorePercentage = computed(() => {
+    const total = this.totalExpectedScore();
+    const max = this.aiTechEval()?.totalMarks;
+    if (total === null || !max) return 0;
+    return Math.round((total / max) * 100);
+  });
+
+  pqMandatoryCount = computed(() => this.pqCriteria().filter(p => p.isMandatory).length);
+  pqMetCount = computed(() => this.pqCriteria().filter(p => p.isMandatory && p._meets === true).length);
+
   typeOpts = [{ label: 'Open', value: 'OPEN' }, { label: 'Limited', value: 'LIMITED' }, { label: 'Single Source', value: 'SINGLE_SOURCE' }, { label: 'EOI', value: 'EOI' }, { label: 'Reverse Auction', value: 'REVERSE_AUCTION' }];
   catOpts = [{ label: 'Works', value: 'WORKS' }, { label: 'Goods', value: 'GOODS' }, { label: 'Services', value: 'SERVICES' }, { label: 'Consultancy', value: 'CONSULTANCY' }];
   procOpts = [{ label: 'ICB', value: 'ICB' }, { label: 'NCB', value: 'NCB' }, { label: 'Shopping', value: 'SHOPPING' }, { label: 'Direct', value: 'DIRECT' }];
@@ -548,7 +885,10 @@ export class TenderDetailComponent implements OnInit {
     this.http.get<{ data: TenderDetail }>(`${environment.apiBaseUrl}/tenders/${id}`).subscribe({
       next: (r) => {
         this.tender.set(r.data);
-        if (r.data.aiAnalysis) this.aiAnalysis.set(r.data.aiAnalysis as unknown as AiAnalysis);
+        if (r.data.aiAnalysis) {
+          this.aiAnalysis.set(r.data.aiAnalysis as unknown as AiAnalysis);
+        }
+        this.loadBidEvaluation(id);
         this.loading.set(false);
         this.loadDocuments();
       },
@@ -777,6 +1117,247 @@ export class TenderDetailComponent implements OnInit {
         this.msg.add({ severity: 'error', summary: 'Analysis Failed', detail: err.error?.error?.message ?? 'Failed to analyze RFP' });
       },
     });
+  }
+
+  // ===== Bid Evaluation =====
+
+  private loadBidEvaluation(tenderId: string): void {
+    this.http.get<{ data: { aiPreQualification: unknown[]; aiTechnicalEvaluation: unknown; bidEvaluation: unknown } }>(
+      `${environment.apiBaseUrl}/tenders/${tenderId}/bid-evaluation`,
+    ).subscribe({
+      next: (r) => {
+        const d = r.data;
+        const saved = d.bidEvaluation as { pqAssessment?: Array<{ criteriaId: string; meetsRequirement: boolean | null; remarks: string; manual?: boolean; criterion?: string; category?: string; requirement?: string; isMandatory?: boolean }>; technicalScoring?: Array<{ sectionId: string; expectedScore: number | null; remarks: string; manual?: boolean; label?: string; maxMarks?: number; sectionName?: string }>; manualSections?: Array<{ sectionId: string; sectionName: string; maxMarks: number }>; goNoGoDecision?: string | null; decisionRemarks?: string } | null;
+
+        // PQ Criteria — merge AI data with saved assessment + restore manual rows
+        const aiPq = (d.aiPreQualification ?? []) as Array<{ id: string; criterion: string; category: string; requirement: string; referenceClause: string | null; isMandatory: boolean }>;
+        const pqMap = new Map((saved?.pqAssessment ?? []).map(a => [a.criteriaId, a]));
+        const pqRows = aiPq.map(p => ({
+          ...p,
+          _meets: pqMap.get(p.id)?.meetsRequirement ?? null,
+          _remarks: pqMap.get(p.id)?.remarks ?? '',
+        }));
+        // Restore manual PQ rows
+        for (const a of (saved?.pqAssessment ?? [])) {
+          if (a.manual && !aiPq.find(p => p.id === a.criteriaId)) {
+            pqRows.push({
+              id: a.criteriaId, criterion: a.criterion ?? '', category: a.category ?? 'OTHER',
+              requirement: a.requirement ?? '', referenceClause: null, isMandatory: a.isMandatory ?? true,
+              _meets: a.meetsRequirement, _remarks: a.remarks ?? '', _manual: true,
+            } as typeof pqRows[0]);
+          }
+        }
+        this.pqCriteria.set(pqRows);
+
+        // Technical Evaluation
+        const aiTech = d.aiTechnicalEvaluation as { totalMarks: number; minimumQualifyingScore: number | null; minimumQualifyingPct: number | null; sections: Array<{ id: string; sectionName: string; maxMarks: number; referenceClause: string | null; subCriteria: Array<{ id: string; description: string; maxMarks: number; scoringMethod: string | null }> }> } | null;
+        this.aiTechEval.set(aiTech);
+
+        {
+          const scoreMap = new Map((saved?.technicalScoring ?? []).map(s => [s.sectionId, s]));
+          const sections: Array<{
+            num: string; sectionId: string; label: string; maxMarks: number; referenceClause: string | null;
+            subCriteria: Array<{ id: string; description: string; maxMarks: number; scoringMethod: string | null; _score?: number | null; _remarks?: string }>;
+            _selectedSubId: string | null; _expectedScore: number | null; _remarks: string; _manual?: boolean; _expanded: boolean;
+          }> = [];
+          let sectionNum = 0;
+
+          // AI-extracted sections
+          if (aiTech) {
+            for (const sec of aiTech.sections) {
+              sectionNum++;
+              const savedScore = scoreMap.get(sec.id);
+              const savedAny = savedScore as Record<string, unknown> | undefined;
+              const isExpanded = savedAny ? (savedAny['expanded'] as boolean ?? false) : false;
+              const subScores = savedAny ? (savedAny['subScores'] as Record<string, { score: number | null; remarks: string }> ?? {}) : {};
+              sections.push({
+                num: String(sectionNum), sectionId: sec.id, label: sec.sectionName,
+                maxMarks: sec.maxMarks, referenceClause: sec.referenceClause,
+                subCriteria: sec.subCriteria.map(sub => ({
+                  ...sub,
+                  _score: subScores[sub.id]?.score ?? null,
+                  _remarks: subScores[sub.id]?.remarks ?? '',
+                })),
+                _selectedSubId: savedAny ? (savedAny['selectedSubId'] as string ?? null) : null,
+                _expectedScore: savedScore?.expectedScore ?? null,
+                _remarks: savedScore?.remarks ?? '',
+                _expanded: isExpanded,
+              });
+            }
+          }
+
+          // Restore manual sections
+          const manualSections = saved?.manualSections ?? [];
+          for (const ms of manualSections) {
+            if (sections.find(s => s.sectionId === ms.sectionId)) continue;
+            sectionNum++;
+            const savedScore = scoreMap.get(ms.sectionId);
+            sections.push({
+              num: String(sectionNum), sectionId: ms.sectionId, label: ms.sectionName,
+              maxMarks: ms.maxMarks, referenceClause: null,
+              subCriteria: [],
+              _selectedSubId: null,
+              _expectedScore: savedScore?.expectedScore ?? null,
+              _remarks: savedScore?.remarks ?? '',
+              _manual: true, _expanded: false,
+            });
+          }
+
+          this.techSections.set(sections);
+
+          if (!aiTech && sections.length > 0) {
+            this.aiTechEval.set({ totalMarks: 100, minimumQualifyingScore: null, minimumQualifyingPct: null, sections: [] });
+          }
+        }
+
+        // Decision
+        this.bidEvalDecision = saved?.goNoGoDecision ?? null;
+        this.bidEvalRemarks = saved?.decisionRemarks ?? '';
+        this.bidEvalDirty = false;
+      },
+    });
+  }
+
+  markBidEvalDirty(): void { this.bidEvalDirty = true; }
+
+  togglePqMeets(pq: { _meets: boolean | null }): void {
+    if (pq._meets === null) pq._meets = true;
+    else if (pq._meets === true) pq._meets = false;
+    else pq._meets = null;
+    this.markBidEvalDirty();
+  }
+
+  getPqRowClass(pq: { isMandatory: boolean; _meets: boolean | null }): string {
+    if (pq._meets === true) return 'bg-green-50';
+    if (pq._meets === false && pq.isMandatory) return 'bg-red-50';
+    if (pq._meets === false) return 'bg-orange-50';
+    return '';
+  }
+
+  getPqBtnClass(pq: { _meets: boolean | null }): string {
+    if (pq._meets === true) return 'bg-green-100 text-green-800 border-green-300';
+    if (pq._meets === false) return 'bg-red-100 text-red-800 border-red-300';
+    return 'bg-gray-100 text-gray-500 border-gray-300';
+  }
+
+  clampScore(row: { _expectedScore: number | null; maxMarks: number }): void {
+    if (row._expectedScore !== null) {
+      if (row._expectedScore < 0) row._expectedScore = 0;
+      if (row._expectedScore > row.maxMarks) row._expectedScore = row.maxMarks;
+    }
+  }
+
+  onSubCriterionSelected(sec: { subCriteria: Array<{ id: string; maxMarks: number }>; _selectedSubId: string | null; _expectedScore: number | null; _expanded: boolean }): void {
+    if (!sec._expanded && sec._selectedSubId) {
+      const sub = sec.subCriteria.find(s => s.id === sec._selectedSubId);
+      sec._expectedScore = sub?.maxMarks ?? null;
+    } else if (!sec._expanded) {
+      sec._expectedScore = null;
+    }
+    this.techSections.set([...this.techSections()]);
+    this.markBidEvalDirty();
+  }
+
+  onSubScoreChange(sec: { subCriteria: Array<{ _score?: number | null; maxMarks: number }>; _expectedScore: number | null; _expanded: boolean }): void {
+    // Clamp and sum sub-scores
+    for (const sub of sec.subCriteria) {
+      if (sub._score != null) {
+        if (sub._score < 0) sub._score = 0;
+        if (sub._score > sub.maxMarks) sub._score = sub.maxMarks;
+      }
+    }
+    sec._expectedScore = sec.subCriteria.reduce((sum, s) => sum + (s._score ?? 0), 0);
+    this.techSections.set([...this.techSections()]);
+    this.markBidEvalDirty();
+  }
+
+  getSectionScore(sec: { _expanded: boolean; _expectedScore: number | null; subCriteria: Array<{ _score?: number | null }> }): number {
+    if (sec._expanded) {
+      return sec.subCriteria.reduce((sum, s) => sum + (s._score ?? 0), 0);
+    }
+    return sec._expectedScore ?? 0;
+  }
+
+  toggleSectionMode(sec: { _expanded: boolean; _selectedSubId: string | null; _expectedScore: number | null; subCriteria: Array<{ _score?: number | null }> }): void {
+    sec._expanded = !sec._expanded;
+    if (sec._expanded) {
+      // Switching to itemized — clear dropdown selection, reset sub-scores
+      sec._selectedSubId = null;
+      sec._expectedScore = sec.subCriteria.reduce((sum, s) => sum + (s._score ?? 0), 0);
+    } else {
+      // Switching to dropdown — clear sub-scores
+      for (const sub of sec.subCriteria) { sub._score = null; }
+      sec._expectedScore = null;
+      sec._selectedSubId = null;
+    }
+    this.techSections.set([...this.techSections()]);
+    this.markBidEvalDirty();
+  }
+
+  saveBidEvaluation(): void {
+    const t = this.tender();
+    if (!t) return;
+    this.savingBidEval = true;
+
+    const body = {
+      pqAssessment: this.pqCriteria().map(p => ({
+        criteriaId: p.id, meetsRequirement: p._meets, remarks: p._remarks, evidence: '',
+        // Save manual row data so it can be restored
+        ...(p._manual ? { manual: true, criterion: p.criterion, category: p.category, requirement: p.requirement, isMandatory: p.isMandatory } : {}),
+      })),
+      technicalScoring: this.techSections().map(s => ({
+        sectionId: s.sectionId,
+        expectedScore: s._expanded ? s.subCriteria.reduce((sum, c) => sum + (c._score ?? 0), 0) : s._expectedScore,
+        remarks: s._remarks,
+        selectedSubId: s._selectedSubId,
+        expanded: s._expanded,
+        subScores: Object.fromEntries(s.subCriteria.map(c => [c.id, { score: c._score ?? null, remarks: c._remarks ?? '' }])),
+        ...(s._manual ? { manual: true, label: s.label, maxMarks: s.maxMarks } : {}),
+      })),
+      manualSections: this.techSections().filter(s => s._manual).map(s => ({
+        sectionId: s.sectionId, sectionName: s.label, maxMarks: s.maxMarks,
+      })),
+      goNoGoDecision: this.bidEvalDecision,
+      decisionRemarks: this.bidEvalRemarks,
+    };
+
+    this.http.put(`${environment.apiBaseUrl}/tenders/${t.id}/bid-evaluation`, body).subscribe({
+      next: () => {
+        this.savingBidEval = false;
+        this.bidEvalDirty = false;
+        this.msg.add({ severity: 'success', summary: 'Saved', detail: 'Bid evaluation saved' });
+      },
+      error: () => {
+        this.savingBidEval = false;
+        this.msg.add({ severity: 'error', summary: 'Failed to save bid evaluation' });
+      },
+    });
+  }
+
+  // Manual entry helpers
+
+  addPqRow(): void {
+    const current = this.pqCriteria();
+    const nextNum = current.length + 1;
+    this.pqCriteria.set([...current, {
+      id: `pq_manual_${nextNum}_${Date.now()}`, criterion: '', category: 'OTHER',
+      requirement: '', referenceClause: null, isMandatory: true,
+      _meets: null, _remarks: '', _manual: true,
+    }]);
+    this.markBidEvalDirty();
+  }
+
+  addTechSection(): void {
+    const current = this.techSections();
+    const sectionId = `ts_manual_${current.length + 1}_${Date.now()}`;
+    this.techSections.set([...current, {
+      num: String(current.length + 1), sectionId, label: '', maxMarks: 0, referenceClause: null,
+      subCriteria: [], _selectedSubId: null, _expectedScore: null, _remarks: '', _manual: true, _expanded: false,
+    }]);
+    if (!this.aiTechEval()) {
+      this.aiTechEval.set({ totalMarks: 0, minimumQualifyingScore: null, minimumQualifyingPct: null, sections: [] });
+    }
+    this.markBidEvalDirty();
   }
 
   goBack(): void { this.router.navigate(['/bid-management/tenders']); }

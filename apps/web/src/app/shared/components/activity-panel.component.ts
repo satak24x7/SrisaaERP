@@ -21,6 +21,7 @@ import { environment } from '../../../environments/environment';
 interface Ref { id: string; name: string; }
 interface LookupItem { label: string; value: string; isActive?: boolean; }
 interface ContactRef { id: string; name: string; }
+interface DateChange { id: string; field: string; oldValue: string | null; newValue: string | null; reason: string | null; changedBy: string; changedByName: string; changedAt: string; }
 interface Association { id: string; entityType: string; entityId: string; entityName: string | null; }
 interface Activity {
   id: string; activityType: string; subject: string; description: string | null;
@@ -189,6 +190,30 @@ const TASK_STATUSES = [
         @if (dialogError) {
           <div class="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{{ dialogError }}</div>
         }
+
+        <!-- Date Change History -->
+        @if (editId && dateChanges().length > 0) {
+          <div class="mt-4 border-t pt-3">
+            <label class="text-sm font-medium text-gray-700 flex items-center gap-1 mb-2">
+              <i class="pi pi-history text-xs"></i> Date Change History
+            </label>
+            <div class="max-h-40 overflow-y-auto space-y-2">
+              @for (ch of dateChanges(); track ch.id) {
+                <div class="flex items-start gap-2 text-xs bg-gray-50 rounded p-2">
+                  <i class="pi pi-clock text-gray-400 mt-0.5"></i>
+                  <div class="flex-1">
+                    <span class="font-medium">{{ dateFieldLabel(ch.field) }}</span>
+                    changed from
+                    <span class="text-red-600">{{ ch.oldValue ? (ch.oldValue | date:'short') : '(none)' }}</span>
+                    to
+                    <span class="text-green-600">{{ ch.newValue ? (ch.newValue | date:'short') : '(none)' }}</span>
+                    <div class="text-gray-400 mt-0.5">by {{ ch.changedByName }} &middot; {{ ch.changedAt | date:'short' }}</div>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        }
       </form>
       <ng-template pTemplate="footer">
         <p-button label="Cancel" severity="secondary" [text]="true" (onClick)="dialogVisible=false" />
@@ -249,6 +274,7 @@ export class ActivityPanelComponent implements OnInit {
   dialogVisible = false;
   editId: string | null = null;
   dialogError = '';
+  dateChanges = signal<DateChange[]>([]);
   emailDialogVisible = false;
   viewEmailData: { subject: string | null; fromAddress: string; fromName: string | null; toAddresses: string; sentAt: string; bodyHtml: string | null; bodyText: string | null } | null = null;
   viewEmailSrcdoc = '';
@@ -321,8 +347,10 @@ export class ActivityPanelComponent implements OnInit {
 
   openDialog(activity?: Activity): void {
     this.dialogError = '';
+    this.dateChanges.set([]);
     if (activity) {
       this.editId = activity.id;
+      this.loadDateChanges(activity.id);
       this.actForm.patchValue({
         activityType: activity.activityType,
         subject: activity.subject,
@@ -449,7 +477,7 @@ export class ActivityPanelComponent implements OnInit {
 
   emailDirection(a: Activity): string {
     const folder = (a.taskStatus ?? '').toLowerCase();
-    return folder === 'sent' ? 'Sent' : 'Received';
+    return folder.includes('sent') ? 'Sent' : 'Received';
   }
 
   typeSeverity(type: string): 'info' | 'warn' | 'success' | 'secondary' {
@@ -461,5 +489,21 @@ export class ActivityPanelComponent implements OnInit {
     if (s === 'CLOSED') return 'success';
     if (s === 'OVERDUE') return 'danger';
     return 'warn';
+  }
+
+  private loadDateChanges(activityId: string): void {
+    this.http.get<{ data: DateChange[] }>(`${environment.apiBaseUrl}/activities/${activityId}/date-changes`).subscribe({
+      next: (r) => this.dateChanges.set(r.data),
+      error: () => {},
+    });
+  }
+
+  dateFieldLabel(field: string): string {
+    switch (field) {
+      case 'startDateTime': return 'Start Date';
+      case 'endDateTime': return 'End Date';
+      case 'dueDateTime': return 'Due Date';
+      default: return field;
+    }
   }
 }

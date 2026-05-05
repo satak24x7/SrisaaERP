@@ -12,10 +12,22 @@ export class CallbackComponent implements OnInit {
   private readonly router = inject(Router);
 
   ngOnInit(): void {
-    this.oidc.checkAuth().subscribe(({ isAuthenticated }) => {
-      if (isAuthenticated) {
-        this.router.navigate(['/']);
-      }
+    this.oidc.checkAuth().subscribe({
+      next: ({ isAuthenticated }) => {
+        if (isAuthenticated) {
+          // Restore the page the user was on before auth redirect
+          const savedUrl = sessionStorage.getItem('post_login_redirect');
+          sessionStorage.removeItem('post_login_redirect');
+          this.router.navigateByUrl(savedUrl || '/');
+        } else {
+          // Code exchange failed (expired/stale code) — restart login
+          this.oidc.authorize();
+        }
+      },
+      error: () => {
+        // Auth check failed entirely — restart login
+        this.oidc.authorize();
+      },
     });
   }
 }

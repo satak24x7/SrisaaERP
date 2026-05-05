@@ -1,5 +1,6 @@
 import { prisma, newId } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
+import { pushToUser } from '../../lib/websocket.js';
 
 export interface CreateNotificationInput {
   userId: string;
@@ -14,15 +15,14 @@ export interface CreateNotificationInput {
 
 /**
  * Create a notification for a user. Fire-and-forget — errors are logged, never thrown.
- * Usage from any module:
- *   import { notify } from '../notification/service.js';
- *   await notify({ userId, title: 'Travel plan approved', category: 'TRAVEL', entityType: 'TRAVEL_PLAN', entityId: plan.id });
+ * Pushes to WebSocket if user is connected, otherwise they'll see it on next page load.
  */
 export async function notify(input: CreateNotificationInput): Promise<void> {
   try {
+    const id = newId();
     await prisma.notification.create({
       data: {
-        id: newId(),
+        id,
         userId: input.userId,
         title: input.title,
         body: input.body ?? null,
@@ -32,6 +32,18 @@ export async function notify(input: CreateNotificationInput): Promise<void> {
         entityId: input.entityId ?? null,
         actionUrl: input.actionUrl ?? null,
       },
+    });
+
+    // Push real-time via WebSocket
+    await pushToUser(input.userId, {
+      id,
+      title: input.title,
+      body: input.body ?? null,
+      type: input.type ?? 'INFO',
+      category: input.category,
+      entityType: input.entityType ?? null,
+      entityId: input.entityId ?? null,
+      actionUrl: input.actionUrl ?? null,
     });
   } catch (err) {
     logger.error({ err, input }, 'Failed to create notification');

@@ -7,6 +7,7 @@ import { prisma, newId } from '../../../lib/prisma.js';
 import { errors } from '../../../middleware/error-handler.js';
 import { costOfSaleRouter } from './cost-of-sale.routes.js';
 import { tenderRouter } from './tender.routes.js';
+import { opportunityDocumentRouter } from './document.routes.js';
 import { Prisma } from '@prisma/client';
 
 const IdParams = z.object({ id: z.string().min(1).max(26) });
@@ -21,6 +22,7 @@ const CreateInput = z.object({
   contractValuePaise: z.coerce.number().int().nonnegative().optional(),
   probabilityPct: z.coerce.number().int().min(0).max(100).optional(),
   submissionDue: z.string().optional(),
+  expectedCloseMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).nullable().optional(),
   ownerUserId: z.string().max(26).optional(),
   closedStatus: z.string().max(64).nullable().optional(),
   contactIds: z.array(z.string().min(1).max(26)).optional(),
@@ -36,6 +38,7 @@ const UpdateInput = z.object({
   contractValuePaise: z.coerce.number().int().nonnegative().nullable().optional(),
   probabilityPct: z.coerce.number().int().min(0).max(100).nullable().optional(),
   submissionDue: z.string().nullable().optional(),
+  expectedCloseMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).nullable().optional(),
   ownerUserId: z.string().max(26).nullable().optional(),
   closedStatus: z.string().max(64).nullable().optional(),
   tenderReleased: z.boolean().optional(),
@@ -81,6 +84,7 @@ function toDto(r: Record<string, unknown>) {
     tenderReleased: row.tenderReleased ?? false,
     contractValuePaise: row.contractValuePaise != null ? Number(row.contractValuePaise) : null,
     probabilityPct: row.probabilityPct, submissionDue: row.submissionDue,
+    expectedCloseMonth: row.expectedCloseMonth ?? null,
     businessUnitId: row.businessUnitId, businessUnitName: row.businessUnit?.name ?? null,
     accountId: row.accountId, accountName: row.account?.name ?? null,
     endClientAccountId: row.endClientAccountId, endClientName: row.endClient?.name ?? null,
@@ -198,6 +202,20 @@ opportunityRouter.get(
       ...params,
     );
 
+    // By expected close month
+    const byCloseMonth = await prisma.$queryRawUnsafe<Array<{
+      close_month: string; count: bigint; total_value_paise: bigint | null; weighted_value_paise: bigint | null;
+    }>>(
+      `SELECT o.expected_close_month AS close_month,
+              COUNT(*) AS count,
+              COALESCE(SUM(o.contract_value_paise), 0) AS total_value_paise,
+              COALESCE(SUM(o.contract_value_paise * COALESCE(o.probability_pct, 0) / 100), 0) AS weighted_value_paise
+       FROM opportunity o
+       WHERE ${whereClause} AND o.expected_close_month IS NOT NULL
+       GROUP BY o.expected_close_month ORDER BY o.expected_close_month ASC`,
+      ...params,
+    );
+
     // Opportunity list (with includes for the table) — only open opportunities
     const oppWhere: Record<string, unknown> = { deletedAt: null, closedStatus: null };
     if (q.buId) oppWhere.businessUnitId = q.buId;
@@ -207,7 +225,7 @@ opportunityRouter.get(
     const opportunities = await prisma.opportunity.findMany({
       where: oppWhere,
       include: OPP_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ expectedCloseMonth: 'asc' }, { createdAt: 'desc' }],
       take: 200,
     });
 
@@ -227,6 +245,12 @@ opportunityRouter.get(
         byBu: byBu.map((r) => ({
           buId: r.business_unit_id,
           buName: r.bu_name,
+          count: Number(r.count),
+          totalValuePaise: Number(r.total_value_paise ?? 0),
+          weightedValuePaise: Number(r.weighted_value_paise ?? 0),
+        })),
+        byCloseMonth: byCloseMonth.map((r) => ({
+          closeMonth: r.close_month,
           count: Number(r.count),
           totalValuePaise: Number(r.total_value_paise ?? 0),
           weightedValuePaise: Number(r.weighted_value_paise ?? 0),
@@ -469,3 +493,4 @@ opportunityRouter.delete(
 /* Mount nested sub-routers */
 opportunityRouter.use('/:id/cost-of-sale', costOfSaleRouter);
 opportunityRouter.use('/:id/tender', tenderRouter);
+opportunityRouter.use('/:id/documents', opportunityDocumentRouter);
