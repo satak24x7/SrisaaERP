@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../../middleware/auth.js';
 import { asyncHandler, validate } from '../../../middleware/validate.js';
 import { prisma, newId } from '../../../lib/prisma.js';
+import { getAiUsageStatus } from '../../../lib/gemini.js';
 
 const UpdateConfigBody = z.object({
   key: z.string().min(1).max(64),
@@ -46,5 +47,14 @@ configRouter.put(
     const map: Record<string, string> = {};
     for (const r of rows) map[r.key] = r.value;
     res.json({ data: map });
+  }),
+);
+
+/* GET /ai-usage — current AI usage status */
+configRouter.get(
+  '/ai-usage',
+  asyncHandler(async (_req, res) => {
+    const usage = await getAiUsageStatus();
+    res.json({ data: usage });
   }),
 );

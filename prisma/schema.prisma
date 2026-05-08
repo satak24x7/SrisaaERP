@@ -672,6 +672,7 @@ model Initiative {
   initiativeLeads         InitiativeLead[]
   initiativeOpportunities InitiativeOpportunity[]
   documents               InitiativeDocument[]
+  expenseSheets           ExpenseSheet[]          @relation("ExpenseInitiative")
 
   @@index([businessUnitId, status, createdAt])
   @@index([ownerUserId])
@@ -826,6 +827,7 @@ model Opportunity {
   costOfSaleEntries        CostOfSaleEntry[]
   tender                   Tender?
   documents                OpportunityDocument[]
+  expenseSheets            ExpenseSheet[]         @relation("ExpenseOpportunity")
 
   @@index([businessUnitId, stage, createdAt])
   @@index([accountId])
@@ -1329,20 +1331,35 @@ model ExpenseSheet {
   title          String  @db.VarChar(255)
   businessUnitId String? @map("business_unit_id") @db.VarChar(26)
   sheetType      String  @default("ADMIN_GENERAL") @map("sheet_type") @db.VarChar(32) // PRE_PROJECT, DURING_PROJECT, ADMIN_GENERAL, REIMBURSEMENT
-  status         String  @default("DRAFT") @db.VarChar(32) // DRAFT, SUBMITTED, APPROVED, REJECTED, PAID
+  status         String  @default("DRAFT") @db.VarChar(32) // DRAFT, SUBMITTED, APPROVED, REJECTED, IN_PROGRESS, EXPENSE_SUBMITTED, COMPLETED
   claimantUserId String  @map("claimant_user_id") @db.VarChar(26)
+  rejectionReason String? @map("rejection_reason") @db.Text
 
-  // Cost context - exactly one of these will be set based on sheetType
-  opportunityId String? @map("opportunity_id") @db.VarChar(26)
-  projectId     String? @map("project_id") @db.VarChar(26)
-  costCentre    String? @map("cost_centre") @db.VarChar(32)
+  // Cost context - one or more may be set to link expense to an entity
+  opportunityId  String? @map("opportunity_id") @db.VarChar(26)
+  projectId      String? @map("project_id") @db.VarChar(26)
+  initiativeId   String? @map("initiative_id") @db.VarChar(26)
+  costCentre     String? @map("cost_centre") @db.VarChar(32)
 
   periodFrom   DateTime @map("period_from") @db.Date
   periodTo     DateTime @map("period_to") @db.Date
   totalPaise   BigInt   @default(0) @map("total_paise")
   notes        String?  @db.Text
 
-  // Payment fields (filled by Finance on PAID)
+  // Advance (claimant requests upfront money before incurring expenses)
+  advanceAmountPaise BigInt   @default(0) @map("advance_amount_paise")
+  advanceStatus      String   @default("NOT_REQUESTED") @map("advance_status") @db.VarChar(32) // NOT_REQUESTED, REQUESTED, APPROVED, DISBURSED
+  advancePaidPaise   BigInt   @default(0) @map("advance_paid_paise")
+  advancePaidDate    DateTime? @map("advance_paid_date") @db.Date
+  advanceRef         String?  @map("advance_ref") @db.VarChar(255)
+
+  // Reimbursement (finance pays back after expenses are approved)
+  reimbursementStatus    String   @default("PENDING") @map("reimbursement_status") @db.VarChar(32) // PENDING, SUBMITTED, APPROVED, PAID
+  reimbursementPaidPaise BigInt   @default(0) @map("reimbursement_paid_paise")
+  reimbursementPaidDate  DateTime? @map("reimbursement_paid_date") @db.Date
+  reimbursementRef       String?  @map("reimbursement_ref") @db.VarChar(255)
+
+  // Legacy payment fields (kept for backward compat)
   paymentDate  DateTime? @map("payment_date") @db.Date
   paymentRef   String?   @map("payment_ref") @db.VarChar(255)
   paymentPaise BigInt    @default(0) @map("payment_paise")
@@ -1355,13 +1372,19 @@ model ExpenseSheet {
 
   businessUnit BusinessUnit?   @relation(fields: [businessUnitId], references: [id])
   project      Project?        @relation(fields: [projectId], references: [id])
+  opportunity  Opportunity?    @relation("ExpenseOpportunity", fields: [opportunityId], references: [id])
+  initiative   Initiative?     @relation("ExpenseInitiative", fields: [initiativeId], references: [id])
   claimant     User            @relation("ExpenseClaimant", fields: [claimantUserId], references: [id])
   lines        ExpenseLine[]
   events       ExpenseSheetEvent[]
+  associations ExpenseSheetAssociation[]
+  bills        ExpenseSheetBill[]
 
   @@index([businessUnitId, status])
   @@index([claimantUserId, status])
   @@index([projectId])
+  @@index([opportunityId])
+  @@index([initiativeId])
   @@map("expense_sheet")
 }
 
@@ -1369,12 +1392,26 @@ model ExpenseLine {
   id           String   @id @db.VarChar(26)
   sheetId      String   @map("sheet_id") @db.VarChar(26)
   expenseDate  DateTime @map("expense_date") @db.Date
-  category     String   @db.VarChar(64) // from lookup list or free text
+  category     String   @db.VarChar(64) // from expense_category or free text
   vendorName   String?  @map("vendor_name") @db.VarChar(255)
   description  String   @db.VarChar(500)
   amountPaise  BigInt   @map("amount_paise")
-  gstPaise     BigInt   @default(0) @map("gst_paise")
+  gstPaise     BigInt   @default(0) @map("gst_paise") // computed total: cgst + sgst + igst (backward compat)
   paymentMode  String   @default("NEFT") @map("payment_mode") @db.VarChar(32) // NEFT, CHEQUE, CASH, UPI, CARD
+
+  // GST compliance fields
+  vendorGstin    String?  @map("vendor_gstin") @db.VarChar(15)
+  invoiceNumber  String?  @map("invoice_number") @db.VarChar(64)
+  invoiceDate    DateTime? @map("invoice_date") @db.Date
+  hsnSacCode     String?  @map("hsn_sac_code") @db.VarChar(8)
+  gstRateBps     Int      @default(0) @map("gst_rate_bps") // basis points: 1800 = 18%
+  supplyType     String   @default("INTRA") @map("supply_type") @db.VarChar(8) // INTRA, INTER, EXEMPT
+  cgstPaise      BigInt   @default(0) @map("cgst_paise")
+  sgstPaise      BigInt   @default(0) @map("sgst_paise")
+  igstPaise      BigInt   @default(0) @map("igst_paise")
+  reverseCharge  Boolean  @default(false) @map("reverse_charge")
+  itcEligible    Boolean  @default(false) @map("itc_eligible")
+
   attachmentName String? @map("attachment_name") @db.VarChar(255)
   attachmentPath String? @map("attachment_path") @db.VarChar(512)
 
@@ -1390,12 +1427,50 @@ model ExpenseLine {
   @@map("expense_line")
 }
 
+model ExpenseSheetAssociation {
+  id           String @id @db.VarChar(26)
+  sheetId      String @map("sheet_id") @db.VarChar(26)
+  entityType   String @map("entity_type") @db.VarChar(32) // OPPORTUNITY, PROJECT, INITIATIVE, ACCOUNT, LEAD, CONTACT
+  entityId     String @map("entity_id") @db.VarChar(26)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sheet ExpenseSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@unique([sheetId, entityType, entityId])
+  @@index([entityType, entityId])
+  @@map("expense_sheet_association")
+}
+
+model ExpenseSheetBill {
+  id             String   @id @db.VarChar(26)
+  sheetId        String   @map("sheet_id") @db.VarChar(26)
+  fileName       String   @map("file_name") @db.VarChar(255)
+  filePath       String   @map("file_path") @db.VarChar(512)
+  fileSize       Int      @default(0) @map("file_size") // bytes
+  mimeType       String   @default("application/octet-stream") @map("mime_type") @db.VarChar(128)
+  importStatus   String   @default("PENDING") @map("import_status") @db.VarChar(32) // PENDING, PROCESSING, IMPORTED, FAILED
+  linkedLineId   String?  @map("linked_line_id") @db.VarChar(26)
+  aiExtractedData Json?   @map("ai_extracted_data") // raw JSON from Gemini
+  errorMessage   String?  @map("error_message") @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  sheet ExpenseSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@index([sheetId, importStatus])
+  @@map("expense_sheet_bill")
+}
+
 model ExpenseCategory {
-  id                    String   @id @db.VarChar(26)
-  name                  String   @unique @db.VarChar(128)
-  capPaise              BigInt?  @map("cap_paise")
-  reimbursable          Boolean  @default(true)
-  gstInputCreditEligible Boolean @default(false) @map("gst_input_credit_eligible")
+  id                     String   @id @db.VarChar(26)
+  name                   String   @unique @db.VarChar(128)
+  sacCode                String?  @map("sac_code") @db.VarChar(8)
+  defaultGstRateBps      Int      @default(1800) @map("default_gst_rate_bps") // basis points: 1800 = 18%
+  capPaise               BigInt?  @map("cap_paise")
+  reimbursable           Boolean  @default(true)
+  gstInputCreditEligible Boolean  @default(false) @map("gst_input_credit_eligible")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")

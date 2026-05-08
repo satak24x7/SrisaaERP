@@ -129,6 +129,6 @@ export class ExpenseSheetListComponent implements OnInit {
   formatRupees(paise: number): string { return '\u20B9' + (paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 }); }
   typeLabel(t: string): string { return t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()); }
   statusSeverity(s: string): 'success' | 'info' | 'warn' | 'danger' | 'secondary' {
-    switch (s) { case 'PAID': return 'success'; case 'APPROVED': return 'info'; case 'SUBMITTED': return 'warn'; case 'REJECTED': return 'danger'; default: return 'secondary'; }
+    switch (s) { case 'COMPLETED': return 'success'; case 'APPROVED': case 'IN_PROGRESS': return 'info'; case 'SUBMITTED': case 'EXPENSE_SUBMITTED': return 'warn'; case 'REJECTED': return 'danger'; default: return 'secondary'; }
   }
 }

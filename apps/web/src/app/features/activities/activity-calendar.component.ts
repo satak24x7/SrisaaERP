@@ -294,6 +294,30 @@ const ENTITY_TYPES = [
             </div>
           }
 
+          <!-- Date Change History -->
+          @if (detailDateChanges().length > 0) {
+            <div class="border-t border-gray-600 pt-3">
+              <label class="text-sm font-medium opacity-70 flex items-center gap-1 mb-2">
+                <i class="pi pi-history text-xs"></i> Date Change History
+              </label>
+              <div class="max-h-40 overflow-y-auto space-y-2">
+                @for (ch of detailDateChanges(); track ch.id) {
+                  <div class="flex items-start gap-2 text-xs rounded p-2 border border-gray-600">
+                    <i class="pi pi-clock opacity-40 mt-0.5"></i>
+                    <div class="flex-1">
+                      <span class="font-medium">{{ dateFieldLabel(ch.field) }}</span>
+                      changed from
+                      <span class="text-red-400">{{ ch.oldValue ? (ch.oldValue | date:'short') : '(none)' }}</span>
+                      to
+                      <span class="text-green-400">{{ ch.newValue ? (ch.newValue | date:'short') : '(none)' }}</span>
+                      <div class="opacity-50 mt-0.5">by {{ ch.changedByName }} &middot; {{ ch.changedAt | date:'short' }}</div>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
           <!-- Timestamps -->
           <div class="text-xs opacity-40 border-t border-gray-600 pt-2 flex gap-4">
             <span>Created: {{ selectedActivity()!.createdAt | date:'medium' }}</span>
@@ -440,6 +464,7 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
   selectedActivity = signal<FullActivity | null>(null);
   detailVisible = false;
   detailLoading = false;
+  detailDateChanges = signal<DateChange[]>([]);
 
   // Task panel
   taskGroups = signal<TaskGroup[]>([]);
@@ -741,10 +766,15 @@ export class ActivityCalendarComponent implements OnInit, AfterViewInit {
   openTaskDetail(id: string): void {
     this.detailLoading = true;
     this.selectedActivity.set(null);
+    this.detailDateChanges.set([]);
     this.detailVisible = true;
     this.http.get<{ data: FullActivity }>(`${environment.apiBaseUrl}/activities/${id}`).subscribe({
       next: (r) => { this.selectedActivity.set(r.data); this.detailLoading = false; },
       error: () => { this.detailLoading = false; },
+    });
+    this.http.get<{ data: DateChange[] }>(`${environment.apiBaseUrl}/activities/${id}/date-changes`).subscribe({
+      next: (r) => this.detailDateChanges.set(r.data),
+      error: () => {},
     });
   }
 

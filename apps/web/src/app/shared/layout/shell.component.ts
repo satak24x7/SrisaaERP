@@ -379,6 +379,9 @@ export class ShellComponent implements OnInit, OnDestroy {
       expanded: false,
       children: [
         { label: 'Travel Expenses', icon: 'pi pi-car', route: '/finance/travel-expenses' },
+        { label: 'Expense Advances', icon: 'pi pi-wallet', route: '/finance/expense-advances' },
+        { label: 'GST Statement', icon: 'pi pi-chart-bar', route: '/finance/gst-statement' },
+        { label: 'Expenditure Report', icon: 'pi pi-chart-line', route: '/finance/expenditure-report' },
       ],
     },
     { label: 'Documents', icon: 'pi pi-folder-open', route: '/documents' },

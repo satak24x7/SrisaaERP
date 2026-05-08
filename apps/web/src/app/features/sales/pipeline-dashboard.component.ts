@@ -8,6 +8,7 @@ import { SelectModule } from 'primeng/select';
 import { TableModule } from 'primeng/table';
 import { TagModule } from 'primeng/tag';
 import { ChartModule } from 'primeng/chart';
+import { DialogModule } from 'primeng/dialog';
 import { environment } from '../../../environments/environment';
 
 interface Ref { id: string; name: string; }
@@ -38,7 +39,7 @@ interface OrdersData {
 @Component({
   selector: 'app-pipeline-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, ButtonModule, SelectModule, TableModule, TagModule, ChartModule],
+  imports: [CommonModule, FormsModule, ButtonModule, SelectModule, TableModule, TagModule, ChartModule, DialogModule],
   template: `
     <div class="flex items-center justify-between mb-6">
       <div>
@@ -181,6 +182,39 @@ interface OrdersData {
         </p-table>
       </div>
     }
+
+    <!-- Drill-down Dialog -->
+    <p-dialog [header]="drillTitle" [(visible)]="drillVisible" [modal]="true" [style]="{width:'900px'}">
+      @if (drillLoading) {
+        <div class="flex items-center justify-center py-8"><i class="pi pi-spin pi-spinner text-2xl text-blue-500"></i></div>
+      } @else {
+        <p-table [value]="drillOpps" styleClass="p-datatable-sm" [paginator]="true" [rows]="10">
+          <ng-template pTemplate="header">
+            <tr>
+              <th>Title</th><th>Account</th><th>BU</th><th>Stage</th>
+              <th class="text-right">Value (₹)</th><th class="text-right">Prob%</th><th>Owner</th>
+            </tr>
+          </ng-template>
+          <ng-template pTemplate="body" let-opp>
+            <tr class="cursor-pointer hover:bg-gray-50" (click)="goToOpp(opp.id); drillVisible=false">
+              <td class="font-medium">{{ opp.title }}</td>
+              <td>{{ opp.accountName || '-' }}</td>
+              <td>{{ opp.businessUnitName || '-' }}</td>
+              <td><p-tag [value]="opp.stage" [severity]="stageSeverity(opp.stage)" /></td>
+              <td class="text-right">{{ formatLakhs(opp.contractValuePaise || 0) }}</td>
+              <td class="text-right">{{ opp.probabilityPct ?? '-' }}%</td>
+              <td>{{ opp.ownerName || '-' }}</td>
+            </tr>
+          </ng-template>
+          <ng-template pTemplate="emptymessage">
+            <tr><td colspan="7" class="text-center text-gray-400 py-6">No opportunities for this selection</td></tr>
+          </ng-template>
+        </p-table>
+        <div class="mt-3 text-sm text-gray-500">
+          {{ drillOpps.length }} opportunities | Total Value: {{ formatCrores(drillTotalPaise) }}
+        </div>
+      }
+    </p-dialog>
   `,
 })
 export class PipelineDashboardComponent implements OnInit {
@@ -200,15 +234,34 @@ export class PipelineDashboardComponent implements OnInit {
   filterStage = '';
   filterOwner = '';
 
+  // Drill-down
+  drillVisible = false;
+  drillLoading = false;
+  drillTitle = '';
+  drillOpps: OppRow[] = [];
+  drillTotalPaise = 0;
+
+  // Pointer cursor on hoverable chart elements
+  private readonly hoverPlugin = {
+    onHover: (evt: { native: MouseEvent }, elements: unknown[]) => {
+      const canvas = evt.native?.target as HTMLCanvasElement | null;
+      if (canvas) canvas.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+    },
+  };
+
   barOptions = {
     plugins: { legend: { display: false } },
     scales: { y: { beginAtZero: true, ticks: { callback: (v: number) => this.formatCroresShort(v) } } },
     maintainAspectRatio: false,
+    ...this.hoverPlugin,
+    onClick: (_evt: unknown, elements: Array<{ index: number }>) => { if (elements.length > 0) this.drillByStage(elements[0]!.index); },
   };
 
   doughnutOptions = {
     plugins: { legend: { position: 'bottom' as const } },
     maintainAspectRatio: false,
+    ...this.hoverPlugin,
+    onClick: (_evt: unknown, elements: Array<{ index: number }>) => { if (elements.length > 0) this.drillByBu(elements[0]!.index); },
   };
 
   stackedBarOptions = {
@@ -218,6 +271,8 @@ export class PipelineDashboardComponent implements OnInit {
       y: { stacked: true, beginAtZero: true, ticks: { callback: (v: number) => this.formatCroresShort(v) } },
     },
     maintainAspectRatio: false,
+    ...this.hoverPlugin,
+    onClick: (_evt: unknown, elements: Array<{ index: number }>) => { if (elements.length > 0) this.drillByOrderMonth(elements[0]!.index); },
   };
 
   ngOnInit(): void {
@@ -342,6 +397,8 @@ export class PipelineDashboardComponent implements OnInit {
       y: { stacked: true, beginAtZero: true, ticks: { callback: (v: number) => this.formatCroresShort(v) } },
     },
     maintainAspectRatio: false,
+    ...this.hoverPlugin,
+    onClick: (_evt: unknown, elements: Array<{ index: number }>) => { if (elements.length > 0) this.drillByCloseMonth(elements[0]!.index); },
   };
 
   private buildCloseMonthChart(p: PipelineData): void {
@@ -440,6 +497,61 @@ export class PipelineDashboardComponent implements OnInit {
     const nowQ = Math.ceil((now.getMonth() + 1) / 3);
     if (y === now.getFullYear() && mQ === nowQ) return 'text-orange-500';
     return '';
+  }
+
+  // --- Drill-down handlers ---
+
+  private openDrill(title: string, opps: OppRow[]): void {
+    this.drillTitle = title;
+    this.drillOpps = [];
+    this.drillTotalPaise = 0;
+    this.drillLoading = true;
+    this.drillVisible = true;
+    // Brief delay so dialog renders with loader before populating table
+    setTimeout(() => {
+      this.drillOpps = opps;
+      this.drillTotalPaise = opps.reduce((s, o) => s + (o.contractValuePaise ?? 0), 0);
+      this.drillLoading = false;
+    }, 150);
+  }
+
+  drillByStage(index: number): void {
+    const p = this.pipeline();
+    if (!p || !p.byStage[index]) return;
+    const stage = p.byStage[index]!.stage;
+    const opps = p.opportunities.filter((o) => o.stage === stage);
+    this.openDrill(`Stage: ${stage}`, opps);
+  }
+
+  drillByBu(index: number): void {
+    const p = this.pipeline();
+    if (!p || !p.byBu[index]) return;
+    const bu = p.byBu[index]!;
+    const opps = p.opportunities.filter((o) => o.businessUnitId === bu.buId);
+    this.openDrill(`Business Unit: ${bu.buName}`, opps);
+  }
+
+  drillByCloseMonth(index: number): void {
+    const p = this.pipeline();
+    if (!p || !p.byCloseMonth[index]) return;
+    const month = p.byCloseMonth[index]!.closeMonth;
+    const opps = p.opportunities.filter((o) => o.expectedCloseMonth === month);
+    this.openDrill(`Close Month: ${this.formatCloseMonth(month)}`, opps);
+  }
+
+  drillByOrderMonth(index: number): void {
+    const o = this.orders();
+    if (!o) return;
+    const months = [...new Set(o.byMonthBu.map((r) => r.month))].sort();
+    if (!months[index]) return;
+    const month = months[index]!;
+    const opps = o.opportunities.filter((op) => {
+      // Match by close month (orders are won opportunities)
+      return op.expectedCloseMonth === month;
+    });
+    const [y, mon] = month.split('-');
+    const label = new Date(Number(y), Number(mon) - 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+    this.openDrill(`Orders Booked: ${label}`, opps);
   }
 
   goToOpp(id: string): void { this.router.navigate(['/sales/opportunities', id]); }

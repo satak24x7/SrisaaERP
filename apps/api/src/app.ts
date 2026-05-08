@@ -38,7 +38,10 @@ import { appUsageRouter } from './modules/app-usage/routes.js';
 import { notificationRouter } from './modules/notification/routes.js';
 import { tenderListRouter } from './modules/tender/routes.js';
 import { finTravelExpensesRouter } from './modules/finance/travel-expenses.routes.js';
-import { expenseSheetRouter } from './modules/expense-sheet/routes.js';
+import { gstStatementRouter } from './modules/finance/gst-statement.routes.js';
+import { expenditureReportRouter } from './modules/finance/expenditure-report.routes.js';
+import { expenseFinanceRouter } from './modules/finance/expense-finance.routes.js';
+import { expenseSheetRouter, expenseCategoryRouter } from './modules/expense-sheet/routes.js';
 import { mailRouter } from './modules/mail/routes.js';
 import { aiRulesRouter } from './modules/admin/ai-rules/routes.js';
 
@@ -129,8 +132,9 @@ export function createApp(): Express {
   // Bid Management
   app.use('/api/v1/tenders', tenderListRouter);
 
-  // Expense Sheets
+  // Expense Sheets & Categories
   app.use('/api/v1/expense-sheets', expenseSheetRouter);
+  app.use('/api/v1/expense-categories', expenseCategoryRouter);
 
   // Mail
   app.use('/api/v1/mail', mailRouter);
@@ -140,6 +144,9 @@ export function createApp(): Express {
 
   // Finance
   app.use('/api/v1/finance/travel-expenses', finTravelExpensesRouter);
+  app.use('/api/v1/finance/gst-statement', gstStatementRouter);
+  app.use('/api/v1/finance/expenditure-report', expenditureReportRouter);
+  app.use('/api/v1/finance/expense-advances', expenseFinanceRouter);
 
   // 404 + error handler (last)
   app.use(notFoundHandler);

@@ -1,4 +1,4 @@
-import { Component, OnInit, inject, signal } from '@angular/core';
+import { Component, OnInit, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ReactiveFormsModule, FormBuilder } from '@angular/forms';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
@@ -28,7 +28,8 @@ import { environment } from '../../../environments/environment';
         <i class="pi pi-spin pi-spinner text-2xl"></i> Loading...
       </div>
     } @else {
-      <form [formGroup]="form" (ngSubmit)="onSave()" class="max-w-xl">
+      <form [formGroup]="form" (ngSubmit)="onSave()">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 class="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
             <i class="pi pi-cog text-blue-600"></i>
@@ -48,7 +49,7 @@ import { environment } from '../../../environments/environment';
           </div>
         </div>
 
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 class="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
             <i class="pi pi-sparkles text-purple-600"></i>
             AI Integration
@@ -64,10 +65,33 @@ import { environment } from '../../../environments/environment';
               <input pInputText formControlName="geminiModel" placeholder="gemini-2.0-flash" class="w-full" />
               <small class="text-gray-500">Default: gemini-2.0-flash. Alternatives: gemini-2.0-flash-lite, gemini-2.5-flash-preview-05-20</small>
             </div>
+
+            <!-- AI Usage Status -->
+            @if (aiUsage()) {
+              <div class="border-t border-gray-200 pt-4 mt-2">
+                <label class="text-sm font-semibold text-gray-700 flex items-center gap-1 mb-3">
+                  <i class="pi pi-chart-bar text-purple-500"></i> Today's Usage
+                </label>
+                <div class="grid grid-cols-2 gap-3">
+                  <div class="rounded-lg bg-purple-50 border border-purple-200 p-3">
+                    <div class="text-xs text-purple-600 font-medium">API Requests</div>
+                    <div class="text-lg font-bold text-purple-800">{{ aiUsage()!.today.requests }} <span class="text-sm font-normal text-purple-500">/ {{ aiUsage()!.limits.requestsPerDay | number }}</span></div>
+                    <div class="mt-1 h-1.5 bg-purple-200 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full" [class]="aiUsageReqPct() > 80 ? 'bg-red-500' : 'bg-purple-500'" [style.width.%]="aiUsageReqPct()"></div>
+                    </div>
+                  </div>
+                  <div class="rounded-lg bg-blue-50 border border-blue-200 p-3">
+                    <div class="text-xs text-blue-600 font-medium">Tokens Used Today</div>
+                    <div class="text-lg font-bold text-blue-800">{{ formatTokens(aiUsage()!.today.tokens) }}</div>
+                    <div class="text-xs text-blue-500 mt-1">Model: {{ aiUsage()!.model }}</div>
+                  </div>
+                </div>
+              </div>
+            }
           </div>
         </div>
 
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 class="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
             <i class="pi pi-folder-open text-blue-600"></i>
             Document Storage
@@ -100,7 +124,7 @@ import { environment } from '../../../environments/environment';
           </div>
         </div>
 
-        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mt-6">
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
           <h3 class="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
             <i class="pi pi-microsoft text-blue-500"></i>
             Microsoft 365 Mail Integration
@@ -128,14 +152,15 @@ import { environment } from '../../../environments/environment';
             </div>
           </div>
         </div>
+        </div><!-- end grid -->
 
-          @if (serverError) {
-            <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{{ serverError }}</div>
-          }
-          <div class="flex justify-end pt-4">
-            <p-button label="Save" type="submit" icon="pi pi-save" [loading]="saving"
-                      [disabled]="form.pristine || saving" />
-          </div>
+        @if (serverError) {
+          <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">{{ serverError }}</div>
+        }
+        <div class="flex justify-end pt-4">
+          <p-button label="Save" type="submit" icon="pi pi-save" [loading]="saving"
+                    [disabled]="form.pristine || saving" />
+        </div>
       </form>
     }
   `,
@@ -148,6 +173,13 @@ export class ConfigurationComponent implements OnInit {
   loading = signal(true);
   saving = false;
   serverError = '';
+
+  aiUsage = signal<{ today: { requests: number; tokens: number }; limits: { requestsPerDay: number; tokensPerMinute: number }; model: string } | null>(null);
+  aiUsageReqPct = computed(() => {
+    const u = this.aiUsage();
+    if (!u) return 0;
+    return Math.min(100, Math.round((u.today.requests / u.limits.requestsPerDay) * 100));
+  });
 
   storageTypes = [
     { label: 'Local Folder', value: 'LOCAL' },
@@ -191,6 +223,19 @@ export class ConfigurationComponent implements OnInit {
       },
       error: () => { this.loading.set(false); },
     });
+    this.loadAiUsage();
+  }
+
+  private loadAiUsage(): void {
+    this.http.get<{ data: { today: { requests: number; tokens: number }; limits: { requestsPerDay: number; tokensPerMinute: number }; model: string } }>(`${environment.apiBaseUrl}/config/ai-usage`).subscribe({
+      next: (r) => this.aiUsage.set(r.data),
+    });
+  }
+
+  formatTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+    return String(n);
   }
 
   onSave(): void {

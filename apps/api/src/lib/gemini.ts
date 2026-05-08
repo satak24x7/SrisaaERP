@@ -1,11 +1,12 @@
 import fs from 'fs';
-import { prisma } from './prisma.js';
+import { prisma, newId } from './prisma.js';
 import { logger } from './logger.js';
 import { downloadFileWithFallback } from './dms-storage.js';
 import path from 'path';
 
 // Default model; configurable via app_config 'gemini_model'
-const DEFAULT_MODEL = 'gemini-2.5-flash';
+const DEFAULT_MODEL = 'gemini-2.0-flash';
+const FALLBACK_MODEL = 'gemini-1.5-flash';
 
 // Legacy local dir for tender docs (fallback for files not yet migrated to GDrive)
 const TENDER_LEGACY_DIR = path.resolve(process.cwd(), '../../uploads/tender-docs');
@@ -308,10 +309,12 @@ async function fetchWithRetry(url: string, init: RequestInit, label: string): Pr
 
     if (res.ok) return res;
 
-    // Only retry on 503 (overloaded) — not 429, which is usually a quota issue that won't resolve with a short wait
-    if (res.status === 503 && attempt < MAX_RETRIES) {
-      const delay = 15_000 * (attempt + 1); // 15s, 30s
-      logger.warn({ status: res.status, attempt: attempt + 1, retryInSec: Math.round(delay / 1000) }, `${label}: waiting ${Math.round(delay / 1000)}s before retry`);
+    // Retry on 503 (overloaded) or 429 (rate limit)
+    if ((res.status === 503 || res.status === 429) && attempt < MAX_RETRIES) {
+      const delay = res.status === 429
+        ? 30_000 * (attempt + 1) // 429: wait 30s, 60s (free tier is 15 RPM)
+        : 15_000 * (attempt + 1); // 503: wait 15s, 30s
+      logger.warn({ status: res.status, attempt: attempt + 1, retryInSec: Math.round(delay / 1000) }, `${label}: ${res.status === 429 ? 'rate limited' : 'overloaded'}, waiting ${Math.round(delay / 1000)}s`);
       await new Promise((resolve) => setTimeout(resolve, delay));
       continue;
     }
@@ -529,11 +532,11 @@ export async function analyzeRfp(files: Array<{ storagePath: string; mimeType: s
     throw new Error(`Gemini API error (${status}): ${detail || 'Check API key and quota in System → Configuration.'}`);
   }
 
-  const result = await res.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
+  const result = await res.json() as Record<string, unknown>;
+  await trackUsage(result);
+  const candidates = (result as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
 
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  const text = candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error('Gemini returned empty response');
 
   // Parse the JSON response
@@ -573,6 +576,50 @@ async function getGeminiConfig() {
   return { apiKey, model };
 }
 
+// --- Simple daily usage counters (stored in app_config) ---
+
+interface UsageMetadata { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number; }
+
+async function trackUsage(responseJson: Record<string, unknown>): Promise<void> {
+  try {
+    const usage = responseJson.usageMetadata as UsageMetadata | undefined;
+    const tokens = usage?.totalTokenCount ?? 0;
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const reqKey = `ai_usage_requests_${today}`;
+    const tokKey = `ai_usage_tokens_${today}`;
+
+    // Increment request count
+    const reqRow = await prisma.appConfig.findUnique({ where: { key: reqKey } });
+    const newReqCount = (reqRow ? parseInt(reqRow.value, 10) : 0) + 1;
+    await prisma.appConfig.upsert({ where: { key: reqKey }, update: { value: String(newReqCount) }, create: { id: newId(), key: reqKey, value: String(newReqCount) } });
+
+    // Increment token count
+    const tokRow = await prisma.appConfig.findUnique({ where: { key: tokKey } });
+    const newTokCount = (tokRow ? parseInt(tokRow.value, 10) : 0) + tokens;
+    await prisma.appConfig.upsert({ where: { key: tokKey }, update: { value: String(newTokCount) }, create: { id: newId(), key: tokKey, value: String(newTokCount) } });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to track AI usage (non-fatal)');
+  }
+}
+
+export async function getAiUsageStatus(): Promise<{ today: { requests: number; tokens: number }; limits: { requestsPerDay: number; tokensPerMinute: number }; model: string }> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [reqRow, tokRow, modelRow] = await Promise.all([
+    prisma.appConfig.findUnique({ where: { key: `ai_usage_requests_${today}` } }),
+    prisma.appConfig.findUnique({ where: { key: `ai_usage_tokens_${today}` } }),
+    prisma.appConfig.findUnique({ where: { key: 'gemini_model' } }),
+  ]);
+  const model = modelRow?.value || DEFAULT_MODEL;
+  // Free tier limits for gemini-2.0-flash / gemini-1.5-flash
+  const limits = { requestsPerDay: 1500, tokensPerMinute: 1_000_000 };
+  return {
+    today: { requests: reqRow ? parseInt(reqRow.value, 10) : 0, tokens: tokRow ? parseInt(tokRow.value, 10) : 0 },
+    limits,
+    model,
+  };
+}
+
 async function callGemini(prompt: string, temperature: number): Promise<string> {
   const { apiKey, model } = await getGeminiConfig();
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -597,10 +644,10 @@ async function callGemini(prompt: string, temperature: number): Promise<string> 
     throw new Error(`Gemini API error (${res.status}): ${detail || 'Check API key and quota.'}`);
   }
 
-  const result = await res.json() as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  const result = await res.json() as Record<string, unknown>;
+  await trackUsage(result);
+  const candidates = (result as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  const text = candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error('Gemini returned empty response');
   return text.trim();
 }
@@ -648,4 +695,121 @@ Write ONLY the reply body (no subject line, no greeting headers like "Subject:" 
 
   logger.info('Drafting email reply via Gemini');
   return callGemini(prompt, 0.5);
+}
+
+// --- Bill / Invoice extraction ---
+
+export interface ExtractedBillData {
+  vendorName: string | null;
+  vendorGstin: string | null;
+  invoiceNumber: string | null;
+  invoiceDate: string | null; // YYYY-MM-DD
+  description: string;
+  category: string | null;
+  amountPaise: number; // base amount in paise
+  gstRateBps: number; // basis points: 1800 = 18%
+  supplyType: string; // INTRA or INTER
+  hsnSacCode: string | null;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  totalPaise: number; // grand total including GST
+}
+
+const BILL_EXTRACTION_PROMPT = `You are an expert accountant processing Indian business invoices/bills. Extract expense details from the attached bill image or PDF.
+
+Return a JSON object with these fields:
+{
+  "vendorName": "Name of the vendor/supplier/merchant",
+  "vendorGstin": "15-character GSTIN if visible (e.g. 36AABCU9603R1ZN), or null",
+  "invoiceNumber": "Invoice/Bill number, or null",
+  "invoiceDate": "Invoice date in YYYY-MM-DD format, or null",
+  "description": "Brief description of what was purchased/service rendered (1-2 sentences)",
+  "category": "Best matching category from: Consulting Services, IT Services, Professional Fees, Travel - Air, Travel - Rail, Travel - Taxi / Cab, Travel - Bus, Hotel / Accommodation, Stationery & Printing, Communication (Telecom), Courier / Freight, Office Rent, Equipment Rental, Food & Beverages, Fuel & Petroleum, Insurance, Office Supplies, Software & Subscriptions, Repairs & Maintenance, Other / Miscellaneous",
+  "baseAmountRupees": 0.00,
+  "gstRatePercent": 0,
+  "supplyType": "INTRA or INTER (based on whether seller and buyer are in same state, check first 2 digits of GSTINs)",
+  "hsnSacCode": "HSN/SAC code if visible, or null",
+  "cgstRupees": 0.00,
+  "sgstRupees": 0.00,
+  "igstRupees": 0.00,
+  "totalAmountRupees": 0.00
+}
+
+Rules:
+- All amounts in Rupees with 2 decimal places
+- If GST is shown as a single line (not split into CGST/SGST/IGST), determine supplyType from GSTIN state codes
+- If no GST is shown, set gstRatePercent to 0 and all GST amounts to 0
+- For handwritten bills without GST, estimate the category and set GST to 0
+- Always return valid JSON, no markdown`;
+
+export async function extractBillData(fileData: Buffer, mimeType: string): Promise<ExtractedBillData> {
+  const { apiKey, model } = await getGeminiConfig();
+
+  const INLINE_LIMIT = 4 * 1024 * 1024;
+  const parts: unknown[] = [];
+
+  if (fileData.length > INLINE_LIMIT) {
+    const fileUri = await uploadToGeminiFileApi(apiKey, fileData, mimeType);
+    parts.push({ file_data: { mime_type: mimeType, file_uri: fileUri } });
+  } else {
+    parts.push({ inline_data: { mime_type: mimeType, data: fileData.toString('base64') } });
+  }
+  parts.push({ text: BILL_EXTRACTION_PROMPT });
+
+  const requestBody = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: { temperature: 0.1, maxOutputTokens: 4096, responseMimeType: 'application/json' },
+  });
+
+  // Try primary model, fallback on 503
+  const modelsToTry = [model, FALLBACK_MODEL];
+  let res: Response | null = null;
+  for (const tryModel of modelsToTry) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${tryModel}:generateContent`;
+    res = await fetchWithRetry(`${url}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: requestBody,
+    }, `Gemini bill extraction (${tryModel})`);
+    if (res.ok || res.status !== 503) break;
+    logger.warn({ model: tryModel }, 'Model overloaded, trying fallback');
+  }
+
+  if (!res || !res.ok) {
+    const errText = res ? await res.text() : 'No response';
+    logger.error({ status: res?.status, err: errText }, 'Gemini bill extraction error');
+    throw new Error(`Gemini API error (${res?.status ?? 'unknown'}). Try again or change model in System > Configuration.`);
+  }
+
+  const result = await res.json() as Record<string, unknown>;
+  await trackUsage(result);
+  const candidates = (result as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  const text = candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini returned empty response for bill extraction');
+
+  const raw = JSON.parse(text);
+  logger.info({ raw }, 'Bill data extracted via Gemini');
+
+  // Convert rupees to paise
+  const baseAmountPaise = Math.round((raw.baseAmountRupees ?? 0) * 100);
+  const gstRate = raw.gstRatePercent ?? 0;
+  const gstRateBps = gstRate * 100;
+
+  return {
+    vendorName: raw.vendorName || null,
+    vendorGstin: raw.vendorGstin || null,
+    invoiceNumber: raw.invoiceNumber || null,
+    invoiceDate: raw.invoiceDate || null,
+    description: raw.description || 'Imported from bill',
+    category: raw.category || null,
+    amountPaise: baseAmountPaise,
+    gstRateBps,
+    supplyType: raw.supplyType || 'INTRA',
+    hsnSacCode: raw.hsnSacCode || null,
+    cgstPaise: Math.round((raw.cgstRupees ?? 0) * 100),
+    sgstPaise: Math.round((raw.sgstRupees ?? 0) * 100),
+    igstPaise: Math.round((raw.igstRupees ?? 0) * 100),
+    totalPaise: Math.round((raw.totalAmountRupees ?? 0) * 100),
+  };
 }
