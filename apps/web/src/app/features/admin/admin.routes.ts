@@ -43,6 +43,11 @@ export const ADMIN_ROUTES: Routes = [
       import('./ai-rules.component').then((m) => m.AiRulesComponent),
   },
   {
+    path: 'approval-workflows',
+    loadComponent: () =>
+      import('./approval-workflows.component').then((m) => m.ApprovalWorkflowsComponent),
+  },
+  {
     path: 'configuration',
     loadComponent: () =>
       import('./configuration.component').then((m) => m.ConfigurationComponent),

@@ -259,6 +259,9 @@ async function resolveFolderHint(hint: string): Promise<string> {
       opportunity: 'Opportunities',
       initiative: 'Initiatives',
       expense: 'Expenses',
+      po: 'PurchaseOrders',
+      grn: 'GRN',
+      quotation: 'Quotations',
     };
 
     if (ENTITY_FOLDERS[parts[0]!] && parts[1]) {

@@ -45,7 +45,7 @@ function decryptPassword(account: MailAccountRow): string {
 
 function createClient(account: MailAccountRow): ImapFlow {
   const password = decryptPassword(account);
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapSsl,
@@ -54,6 +54,11 @@ function createClient(account: MailAccountRow): ImapFlow {
     socketTimeout: 30000,
     emitLogs: false,
   });
+  // Prevent unhandled ECONNRESET from crashing the process
+  client.on('error', (err: Error) => {
+    logger.warn({ err, email: account.emailAddress }, 'IMAP connection error (handled)');
+  });
+  return client;
 }
 
 export async function testConnection(account: MailAccountRow): Promise<{ imap: boolean; error?: string }> {

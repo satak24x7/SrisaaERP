@@ -67,10 +67,21 @@ export const routes: Routes = [
       },
       {
         path: 'procurement',
-        component: PlaceholderComponent,
-        data: { title: 'Procurement', icon: 'pi pi-truck' },
+        loadChildren: () =>
+          import('./features/procurement/procurement.routes').then((m) => m.PROCUREMENT_ROUTES),
+      },
+      {
+        path: 'approvals',
+        loadComponent: () =>
+          import('./features/approvals/approval-inbox.component').then((m) => m.ApprovalInboxComponent),
       },
     ],
+  },
+  {
+    path: 'procurement/purchase-orders/:id/print',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/procurement/po-print.component').then((m) => m.PoPrintComponent),
   },
   {
     path: 'callback',

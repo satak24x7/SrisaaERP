@@ -67,7 +67,7 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 | R4 Evaluation & Award | Bid evaluation 3 sub-stages, clarification log, award workflow + auto-handover, loss capture | |
 | R5 Financial Layer | Budget, Inflow, Cash Flow, Bank Guarantees shipped in R3. Only Commitment Accounting pending (moved to R3.1). | **Mostly Shipped** |
 | R6 Expense Management | Full expense sheet lifecycle | |
-| R7 Material & Procurement | MR → PO → GRN → Issue | |
+| R7 Material & Procurement | **Phase 1 shipped**: Approval Engine (generic multi-step), Vendor KYC lifecycle (docs, bank dual-control, GSTIN/PAN validation), Material Request (full CRUD + approval integration), Item/Vendor/Quotation/Rate Comparison/PO/GRN/Invoice CRUD with GST, budget integration, 3-way match. **Phase 2-4 pending**: RFQ, Tech Eval, Dispatch, Inspection, line-level 3WM, TDS, Vendor Scorecard, KPI dashboard | **Phase 1 Shipped** |
 | R8 Intelligence | BU portfolio, procurement, cash-flow dashboards | |
 | R9 Integrations | Accounting, banking, HRMS, SSO | |
 | R10 Org Masters & Hardening | Certifications, DSCs, Empanelments, Turnover, Past Projects, Employees, Expiry Dashboard, RBAC enforcement, Infra bootstrap, Dashboard page | |
@@ -76,6 +76,7 @@ The full list of 22 user stories (US-01 … US-22) is in `docs/user-stories.md`.
 | Mobile App | Ionic 8 + Capacitor 6. 4 tabs: Activities, Calendar, Travel Plans, Notifications. Direct login (email/password). Usage tracking with 2-min heartbeat. Android APK. | **Shipped** |
 | Platform | In-app notifications (web bell + mobile tab), reminder worker (1hr before events), mobile usage tracking (admin page), Keycloak auto-sync (users + roles from app), Gemini AI config in System → Configuration | **Shipped** |
 | Session 8 | Expense Sheets MVP (CRUD + line items + attachments + workflow), Finance Travel Expenses (advance + reimbursement), Travel proof attachments, Travel→CoS sync, Activity tabs (Current/Upcoming/Planned/Completed/All), Opportunity filters (Open/Closed/All + BU + Account), Close & Add New, auth hardening, date TZ fix | **Shipped** |
+| Session 14 | **Procurement Overhaul Phase 1**: Generic Approval Engine (multi-step, configurable, value-based routing, self-approval prevention), Vendor KYC lifecycle (documents, bank dual-control verify, GSTIN/PAN validation, status machine), Material Request full implementation (CRUD + lines + submit/approve/reject/return + approval engine integration), Item/Vendor/Quotation/RateComparison/PO/GRN/Invoice CRUD (uncommitted from prior session, now with KYC + approval). IMAP crash fix. | **Shipped** |
 
 MVP = R1 + R2 + R3 (Execution Core) + R4 (Evaluation & Award). Expense and Procurement are **fast-follows**, not optional. R10 items can be pulled into any release as needed.
 
