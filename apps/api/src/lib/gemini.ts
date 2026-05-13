@@ -5,8 +5,8 @@ import { downloadFileWithFallback } from './dms-storage.js';
 import path from 'path';
 
 // Default model; configurable via app_config 'gemini_model'
-const DEFAULT_MODEL = 'gemini-2.0-flash';
-const FALLBACK_MODEL = 'gemini-1.5-flash';
+const DEFAULT_MODEL = 'gemini-2.5-flash';
+const FALLBACK_MODEL = 'gemini-2.0-flash';
 
 // Legacy local dir for tender docs (fallback for files not yet migrated to GDrive)
 const TENDER_LEGACY_DIR = path.resolve(process.cwd(), '../../uploads/tender-docs');
@@ -458,13 +458,13 @@ export async function analyzeRfp(files: Array<{ storagePath: string; mimeType: s
     contents: [{ parts }],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 16384,
+      maxOutputTokens: 65536,
       responseMimeType: 'application/json',
     },
   };
 
   // Try configured model first, then fallback models on 429/503
-  const FALLBACK_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash'];
+  const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
   const modelsToTry = [model, ...FALLBACK_MODELS.filter((m) => m !== model)];
 
   let res: Response | null = null;
@@ -811,5 +811,89 @@ export async function extractBillData(fileData: Buffer, mimeType: string): Promi
     sgstPaise: Math.round((raw.sgstRupees ?? 0) * 100),
     igstPaise: Math.round((raw.igstRupees ?? 0) * 100),
     totalPaise: Math.round((raw.totalAmountRupees ?? 0) * 100),
+  };
+}
+
+// ===== Price List / Catalog Extraction from Image/PDF =====
+
+const PRICE_LIST_EXTRACTION_PROMPT = `You are an expert at extracting product catalog and price list data from images and PDF documents.
+
+Extract ALL rows from the price list / catalog / quotation table in the document. Return a JSON object with:
+
+{
+  "headers": ["column1_name", "column2_name", ...],
+  "rows": [
+    ["value1", "value2", ...],
+    ["value1", "value2", ...]
+  ]
+}
+
+Rules:
+- Identify the table structure — look for columns like: S.No, Item/Product/Model, Description, Part No, Brand/Make, Unit Price/Rate/MRP, UOM/Unit, HSN, GST%, Qty, Warranty, etc.
+- Extract EVERY data row, not just a sample. Include all pages.
+- Preserve the original column headers as-is.
+- Convert all values to plain strings (no formatting, no currency symbols).
+- For prices, return just the number (e.g. "4500.00" not "₹4,500.00").
+- Skip summary/total rows, headers repeated on subsequent pages, and empty rows.
+- If the document has multiple tables, merge them if they have the same columns, otherwise return the largest table.
+- Return valid JSON only. No markdown, no explanation.`;
+
+export async function extractPriceListFromFile(fileData: Buffer, mimeType: string): Promise<{ headers: string[]; rows: string[][] }> {
+  const { apiKey, model } = await getGeminiConfig();
+
+  const INLINE_LIMIT = 4 * 1024 * 1024;
+  const parts: unknown[] = [];
+
+  if (fileData.length > INLINE_LIMIT) {
+    const fileUri = await uploadToGeminiFileApi(apiKey, fileData, mimeType);
+    parts.push({ file_data: { mime_type: mimeType, file_uri: fileUri } });
+  } else {
+    parts.push({ inline_data: { mime_type: mimeType, data: fileData.toString('base64') } });
+  }
+  parts.push({ text: PRICE_LIST_EXTRACTION_PROMPT });
+
+  const requestBody = JSON.stringify({
+    contents: [{ parts }],
+    generationConfig: { temperature: 0.1, maxOutputTokens: 65536, responseMimeType: 'application/json' },
+  });
+
+  const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite'];
+  const modelsToTry = [model, ...FALLBACK_MODELS.filter(m => m !== model)];
+  let res: Response | null = null;
+
+  for (const tryModel of modelsToTry) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${tryModel}:generateContent`;
+    logger.info({ mimeType, size: fileData.length, model: tryModel }, 'Extracting price list via Gemini');
+    res = await fetchWithRetry(`${url}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: requestBody,
+    }, `Price list extraction (${tryModel})`);
+    if (res.ok) break;
+    if (res.status === 429 || res.status === 503) {
+      logger.warn({ model: tryModel, status: res.status }, 'Model unavailable, trying next');
+      continue;
+    }
+    break;
+  }
+
+  if (!res || !res.ok) {
+    const errText = res ? await res.text() : 'No response';
+    logger.error({ status: res?.status, err: errText }, 'Gemini price list extraction error');
+    throw new Error(`Gemini API error (${res?.status ?? 'unknown'}). Try again or change model in System > Configuration.`);
+  }
+
+  const result = await res.json() as Record<string, unknown>;
+  await trackUsage(result);
+  const candidates = (result as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }).candidates;
+  const text = candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error('Gemini returned empty response for price list extraction');
+
+  const parsed = JSON.parse(text) as { headers?: string[]; rows?: string[][] };
+  logger.info({ headerCount: parsed.headers?.length, rowCount: parsed.rows?.length }, 'Price list extracted via Gemini');
+
+  return {
+    headers: (parsed.headers ?? []).map(h => String(h)),
+    rows: (parsed.rows ?? []).map(r => (r as unknown[]).map(c => String(c ?? ''))),
   };
 }

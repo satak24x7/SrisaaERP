@@ -163,6 +163,12 @@ async function main() {
   // ── Expense Categories with SAC codes ──
   await seedExpenseCategories();
 
+  // ── Vendor Category lookup list ──
+  await seedVendorCategoryLookup();
+
+  // ── Item Category lookup list ──
+  await seedItemCategory();
+
   console.log('✅ Seed complete.');
 }
 
@@ -280,6 +286,64 @@ async function seedExpenseCategories() {
     });
   }
   console.log(`  ${categories.length} expense categories seeded`);
+}
+
+async function seedVendorCategoryLookup() {
+  const code = 'vendor_category';
+  const existing = await prisma.lookupList.findUnique({ where: { code } });
+  if (existing) { console.log('  Vendor Category lookup already exists'); return; }
+
+  const listId = id();
+  await prisma.lookupList.create({ data: { id: listId, code, name: 'Vendor Category' } });
+
+  const categories = [
+    { label: 'Material Supplier', value: 'MATERIAL_SUPPLIER' },
+    { label: 'Service Provider', value: 'SERVICE_PROVIDER' },
+    { label: 'Contractor', value: 'CONTRACTOR' },
+    { label: 'Consultant', value: 'CONSULTANT' },
+    { label: 'IT / Software', value: 'IT_SOFTWARE' },
+    { label: 'Office Supplies', value: 'OFFICE_SUPPLIES' },
+    { label: 'Freight / Logistics', value: 'FREIGHT_LOGISTICS' },
+    { label: 'Equipment Rental', value: 'EQUIPMENT_RENTAL' },
+    { label: 'Printing & Stationery', value: 'PRINTING_STATIONERY' },
+    { label: 'Marketing & Events', value: 'MARKETING_EVENTS' },
+    { label: 'Other', value: 'OTHER' },
+  ];
+  for (let i = 0; i < categories.length; i++) {
+    await prisma.lookupItem.create({
+      data: { id: id(), listId, label: categories[i]!.label, value: categories[i]!.value, sortOrder: (i + 1) * 10, isActive: true },
+    });
+  }
+  console.log('  Vendor Category lookup list created with ' + categories.length + ' items');
+}
+
+async function seedItemCategory() {
+  console.log('Seeding Item Category lookup...');
+  const code = 'item_category';
+  const existing = await prisma.lookupList.findUnique({ where: { code } });
+  if (existing) { console.log('  Item Category lookup already exists'); return; }
+
+  const listId = id();
+  await prisma.lookupList.create({ data: { id: listId, code, name: 'Item Category' } });
+
+  const categories = [
+    { label: 'IT Hardware', value: 'IT_HARDWARE' },
+    { label: 'IT Software', value: 'IT_SOFTWARE' },
+    { label: 'Networking', value: 'NETWORKING' },
+    { label: 'Civil', value: 'CIVIL' },
+    { label: 'Electrical', value: 'ELECTRICAL' },
+    { label: 'Furniture', value: 'FURNITURE' },
+    { label: 'Stationery', value: 'STATIONERY' },
+    { label: 'Consumable', value: 'CONSUMABLE' },
+    { label: 'Service', value: 'SERVICE' },
+    { label: 'Other', value: 'OTHER' },
+  ];
+  for (let i = 0; i < categories.length; i++) {
+    await prisma.lookupItem.create({
+      data: { id: id(), listId, label: categories[i]!.label, value: categories[i]!.value, sortOrder: (i + 1) * 10, isActive: true },
+    });
+  }
+  console.log('  Item Category lookup list created with ' + categories.length + ' items');
 }
 
 main()

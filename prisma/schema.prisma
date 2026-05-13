@@ -183,6 +183,7 @@ model BusinessUnit {
   materialRequests MaterialRequest[]
   members          BusinessUnitMember[]
   travelPlans      TravelPlan[]
+  purchaseOrders   PurchaseOrder[]
 
   @@index([name])
   @@map("business_unit")
@@ -1031,6 +1032,7 @@ model Project {
   expenseSheets    ExpenseSheet[]
   materialRequests MaterialRequest[]
   documents        ProjectDocument[]
+  purchaseOrders   PurchaseOrder[]
 
   @@index([businessUnitId, status])
   @@index([projectManagerId])
@@ -1195,7 +1197,8 @@ model BudgetLine {
   createdBy String    @map("created_by") @db.VarChar(26)
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
-  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  budget         Budget          @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  purchaseOrders PurchaseOrder[]
 
   @@index([budgetId])
   @@map("budget_line")
@@ -1504,10 +1507,13 @@ model ExpenseSheetEvent {
 model Item {
   id              String   @id @db.VarChar(26)
   sku             String   @unique @db.VarChar(64)
+  name            String   @default("") @db.VarChar(255)
   description     String   @db.VarChar(512)
   uom             String   @db.VarChar(16)
   category        String?  @db.VarChar(128)
   hsn             String?  @db.VarChar(16)
+  sacCode         String?  @map("sac_code") @db.VarChar(16)
+  defaultGstRateBps Int    @default(0) @map("default_gst_rate_bps")
   specifications  Json?
   lastPurchasedRatePaise BigInt? @map("last_purchased_rate_paise")
   makeModel       String?  @map("make_model") @db.VarChar(128)
@@ -1518,21 +1524,49 @@ model Item {
   createdBy String    @map("created_by") @db.VarChar(26)
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
+  quotationLines       VendorQuotationLine[]
+  poLines              PoLine[]
+  materialRequestLines MaterialRequestLine[]
+  oemCatalogItems      OemCatalogItem[]
+
   @@map("item")
 }
 
 model Vendor {
-  id         String  @id @db.VarChar(26)
-  name       String  @db.VarChar(255)
-  gstin      String? @db.VarChar(16)
-  pan        String? @db.VarChar(16)
-  category   String? @db.VarChar(128)
-  email      String? @db.VarChar(255)
-  phone      String? @db.VarChar(32)
+  id              String  @id @db.VarChar(26)
+  vendorCode      String? @unique @map("vendor_code") @db.VarChar(32) // auto-generated: VND-2026-0001
+  name            String  @db.VarChar(255)
+  gstin           String? @db.VarChar(16)
+  pan             String? @db.VarChar(16)
+  category        String? @db.VarChar(128) // Material, Service, Contractor, Consultant
+  contactName     String? @map("contact_name") @db.VarChar(255)
+  email           String? @db.VarChar(255)
+  phone           String? @db.VarChar(32)
+  address         String? @db.Text
+  city            String? @db.VarChar(128)
+  state           String? @db.VarChar(64)
+  pincode         String? @db.VarChar(10)
+  // Legacy bank fields (kept for backward compat — prefer VendorBankDetail for new entries)
   bankAccountName String? @map("bank_account_name") @db.VarChar(255)
-  bankAccountNo   String? @map("bank_account_no") @db.VarChar(64)   // encrypted in prod
+  bankAccountNo   String? @map("bank_account_no") @db.VarChar(64)
   bankIfsc        String? @map("bank_ifsc") @db.VarChar(16)
-  status     String  @default("ACTIVE") @db.VarChar(16)
+  bankBranch      String? @map("bank_branch") @db.VarChar(255)
+  paymentTermsDays Int?   @map("payment_terms_days")
+  rating          Int?    @default(0) // 1-5 star
+  notes           String? @db.Text
+  status          String  @default("ACTIVE") @db.VarChar(16) // ACTIVE, INACTIVE
+  // KYC lifecycle
+  kycStatus       String  @default("DRAFT") @map("kyc_status") @db.VarChar(24) // DRAFT, KYC_PENDING, ACTIVE, BLOCKED, BLACKLISTED
+  kycBlockReason  String? @map("kyc_block_reason") @db.Text
+  // MSME
+  msmeNumber      String? @map("msme_number") @db.VarChar(32)
+  msmeCategory    String? @map("msme_category") @db.VarChar(16) // MICRO, SMALL, MEDIUM
+  // TDS defaults
+  tdsSection      String? @map("tds_section") @db.VarChar(8) // 194C, 194J, etc.
+  defaultTdsRateBps Int?  @map("default_tds_rate_bps") // basis points: 200 = 2%
+  // OEM
+  isOem           Boolean @default(false) @map("is_oem")
+  oemPrincipals   String? @map("oem_principals") @db.VarChar(500) // comma-separated
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
@@ -1540,19 +1574,73 @@ model Vendor {
   createdBy String    @map("created_by") @db.VarChar(26)
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
+  quotations      VendorQuotation[]
+  purchaseOrders  PurchaseOrder[]
+  invoices        VendorInvoice[]
+  documents       VendorDocument[]
+  bankDetails     VendorBankDetail[]
+  priceLists      VendorPriceList[]
+  oemCatalogItems OemCatalogItem[]
+
   @@index([gstin])
+  @@index([name])
   @@map("vendor")
+}
+
+model VendorDocument {
+  id          String    @id @db.VarChar(26)
+  vendorId    String    @map("vendor_id") @db.VarChar(26)
+  docType     String    @map("doc_type") @db.VarChar(32) // GST_CERT, PAN_CARD, MSME, CANCELLED_CHEQUE, NDA, ISO, OEM_AUTH, COMPANY_REG, OTHER
+  fileName    String    @map("file_name") @db.VarChar(255)
+  mimeType    String    @map("mime_type") @db.VarChar(128)
+  fileSize    Int       @map("file_size")
+  storagePath String    @map("storage_path") @db.VarChar(512)
+  expiresAt   DateTime? @map("expires_at") @db.Date
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId, docType])
+  @@map("vendor_document")
+}
+
+model VendorBankDetail {
+  id               String    @id @db.VarChar(26)
+  vendorId         String    @map("vendor_id") @db.VarChar(26)
+  accountName      String    @map("account_name") @db.VarChar(255)
+  accountNo        String    @map("account_no") @db.VarChar(64)
+  ifsc             String    @db.VarChar(16)
+  branch           String?   @db.VarChar(255)
+  isPrimary        Boolean   @default(false) @map("is_primary")
+  verifiedByUserId String?   @map("verified_by_user_id") @db.VarChar(26)
+  verifiedAt       DateTime? @map("verified_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_bank_detail")
 }
 
 model MaterialRequest {
   id              String                 @id @db.VarChar(26)
-  businessUnitId  String                 @map("business_unit_id") @db.VarChar(26)
-  projectId       String                 @map("project_id") @db.VarChar(26)
   mrNo            String                 @unique @map("mr_no") @db.VarChar(32)
+  title           String                 @default("") @db.VarChar(255)
+  businessUnitId  String                 @map("business_unit_id") @db.VarChar(26)
+  projectId       String?                @map("project_id") @db.VarChar(26)
   requesterUserId String                 @map("requester_user_id") @db.VarChar(26)
   priority        Priority               @default(NORMAL)
   requiredBy      DateTime               @map("required_by") @db.Date
   justification   String?                @db.Text
+  source          String?                @db.VarChar(32) // STOCK, PURCHASE, FABRICATION, MAINTENANCE, EMERGENCY
   status          MaterialRequestStatus  @default(DRAFT)
 
   createdAt DateTime  @default(now()) @map("created_at")
@@ -1562,37 +1650,499 @@ model MaterialRequest {
   updatedBy String    @map("updated_by") @db.VarChar(26)
 
   businessUnit BusinessUnit          @relation(fields: [businessUnitId], references: [id])
-  project      Project               @relation(fields: [projectId], references: [id])
+  project      Project?              @relation(fields: [projectId], references: [id])
   lines        MaterialRequestLine[]
 
   @@index([projectId, status])
   @@index([businessUnitId, createdAt])
+  @@index([requesterUserId, status])
   @@map("material_request")
 }
 
 model MaterialRequestLine {
-  id           String  @id @db.VarChar(26)
-  mrId         String  @map("mr_id") @db.VarChar(26)
-  itemId       String  @map("item_id") @db.VarChar(26)
-  qtyRequested Decimal @map("qty_requested") @db.Decimal(18, 4)
-  qtyApproved  Decimal? @map("qty_approved") @db.Decimal(18, 4)
-  qtyFulfilled Decimal @default(0) @map("qty_fulfilled") @db.Decimal(18, 4)
-  remarks      String? @db.Text
+  id                String   @id @db.VarChar(26)
+  mrId              String   @map("mr_id") @db.VarChar(26)
+  itemId            String?  @map("item_id") @db.VarChar(26)
+  description       String   @default("") @db.VarChar(500) // free-text when itemId is null
+  uom               String   @default("NOS") @db.VarChar(16)
+  qtyRequested      Decimal  @map("qty_requested") @db.Decimal(18, 4)
+  qtyApproved       Decimal? @map("qty_approved") @db.Decimal(18, 4)
+  qtyFulfilled      Decimal  @default(0) @map("qty_fulfilled") @db.Decimal(18, 4)
+  estimatedRatePaise BigInt? @map("estimated_rate_paise")
+  remarks           String?  @db.Text
+  sortOrder         Int      @default(0) @map("sort_order")
 
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
 
-  mr MaterialRequest @relation(fields: [mrId], references: [id], onDelete: Cascade)
+  mr   MaterialRequest @relation(fields: [mrId], references: [id], onDelete: Cascade)
+  item Item?           @relation(fields: [itemId], references: [id])
 
   @@index([mrId])
   @@index([itemId])
   @@map("material_request_line")
 }
 
-// TODO(R7): Indent, Rfq, Quotation, PurchaseOrder, PoLine, Grn, GrnLine,
-//           MaterialIssue, MaterialIssueLine, MaterialReturn,
-//           StoreLocation, StockLedgerEntry, VendorPerformanceSnapshot
+// ==========================================================================
+// Procurement — Quotation, Rate Comparison, PO, GRN, Invoice, Payment
+// ==========================================================================
+
+model VendorQuotation {
+  id               String    @id @db.VarChar(26)
+  quotationNo      String    @unique @map("quotation_no") @db.VarChar(32)
+  vendorId         String    @map("vendor_id") @db.VarChar(26)
+  referenceNo      String?   @map("reference_no") @db.VarChar(64)
+  quotationDate    DateTime  @map("quotation_date") @db.Date
+  validUntil       DateTime? @map("valid_until") @db.Date
+  paymentTermsDays Int?      @map("payment_terms_days")
+  deliveryDays     Int?      @map("delivery_days")
+  totalPaise       BigInt    @default(0) @map("total_paise")
+  gstTotalPaise    BigInt    @default(0) @map("gst_total_paise")
+  grandTotalPaise  BigInt    @default(0) @map("grand_total_paise")
+  notes            String?   @db.Text
+  status           String    @default("ACTIVE") @db.VarChar(16) // ACTIVE, EXPIRED, SUPERSEDED
+  rateComparisonId String?   @map("rate_comparison_id") @db.VarChar(26)
+  attachmentName   String?   @map("attachment_name") @db.VarChar(255)
+  attachmentPath   String?   @map("attachment_path") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  vendor         Vendor               @relation(fields: [vendorId], references: [id])
+  rateComparison RateComparison?      @relation(fields: [rateComparisonId], references: [id])
+  lines          VendorQuotationLine[]
+  purchaseOrders PurchaseOrder[]
+
+  @@index([vendorId])
+  @@index([rateComparisonId])
+  @@map("vendor_quotation")
+}
+
+model VendorQuotationLine {
+  id             String  @id @db.VarChar(26)
+  quotationId    String  @map("quotation_id") @db.VarChar(26)
+  itemId         String? @map("item_id") @db.VarChar(26)
+  description    String  @db.VarChar(500)
+  uom            String  @db.VarChar(16)
+  qty            Decimal @db.Decimal(18, 4)
+  ratePaise      BigInt  @map("rate_paise")
+  discountPct    Decimal @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  gstRateBps     Int     @default(0) @map("gst_rate_bps")
+  supplyType     String  @default("INTRA") @map("supply_type") @db.VarChar(8) // INTRA, INTER, EXEMPT
+  cgstPaise      BigInt  @default(0) @map("cgst_paise")
+  sgstPaise      BigInt  @default(0) @map("sgst_paise")
+  igstPaise      BigInt  @default(0) @map("igst_paise")
+  lineTotalPaise BigInt  @default(0) @map("line_total_paise")
+  hsnSacCode     String? @map("hsn_sac_code") @db.VarChar(16)
+  sortOrder      Int     @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  oemCatalogItemId String? @map("oem_catalog_item_id") @db.VarChar(26)
+
+  quotation      VendorQuotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  item           Item?           @relation(fields: [itemId], references: [id])
+  oemCatalogItem OemCatalogItem? @relation(fields: [oemCatalogItemId], references: [id])
+
+  @@index([quotationId])
+  @@index([itemId])
+  @@index([oemCatalogItemId])
+  @@map("vendor_quotation_line")
+}
+
+model RateComparison {
+  id               String  @id @db.VarChar(26)
+  comparisonNo     String  @unique @map("comparison_no") @db.VarChar(32)
+  title            String  @db.VarChar(255)
+  status           String  @default("DRAFT") @db.VarChar(16) // DRAFT, FINALIZED
+  selectedVendorId String? @map("selected_vendor_id") @db.VarChar(26)
+  selectionReason  String? @map("selection_reason") @db.Text
+  notes            String? @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  quotations VendorQuotation[]
+
+  @@map("rate_comparison")
+}
+
+model PurchaseOrder {
+  id                 String    @id @db.VarChar(26)
+  poNo               String    @unique @map("po_no") @db.VarChar(32)
+  label              String?   @db.VarChar(255) // internal label/title (not printed)
+  poType             String    @map("po_type") @db.VarChar(16) // ADMIN, MARKETING, PROJECT
+  vendorId           String    @map("vendor_id") @db.VarChar(26)
+  quotationId        String?   @map("quotation_id") @db.VarChar(26)
+  projectId          String?   @map("project_id") @db.VarChar(26)
+  budgetLineId       String?   @map("budget_line_id") @db.VarChar(26)
+  businessUnitId     String?   @map("business_unit_id") @db.VarChar(26)
+  poDate             DateTime  @map("po_date") @db.Date
+  expectedDelivery   DateTime? @map("expected_delivery") @db.Date
+  deliveryAddress    String?   @map("delivery_address") @db.Text
+  paymentTermsDays   Int?      @map("payment_terms_days")
+  paymentTermsText   String?   @map("payment_terms_text") @db.VarChar(500)
+  freightPaise       BigInt    @default(0) @map("freight_paise")
+  subTotalPaise      BigInt    @default(0) @map("sub_total_paise")
+  discountPaise      BigInt    @default(0) @map("discount_paise")
+  taxablePaise       BigInt    @default(0) @map("taxable_paise")
+  cgstPaise          BigInt    @default(0) @map("cgst_paise")
+  sgstPaise          BigInt    @default(0) @map("sgst_paise")
+  igstPaise          BigInt    @default(0) @map("igst_paise")
+  grandTotalPaise    BigInt    @default(0) @map("grand_total_paise")
+  status             String    @default("DRAFT") @db.VarChar(24) // DRAFT, APPROVED, ISSUED, PARTIALLY_RECEIVED, COMPLETED, CANCELLED
+  notes              String?   @db.Text
+  termsAndConditions String?   @map("terms_and_conditions") @db.Text
+  approvedByUserId   String?   @map("approved_by_user_id") @db.VarChar(26)
+  approvedAt         DateTime? @map("approved_at")
+  cancelledReason    String?   @map("cancelled_reason") @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  vendor       Vendor            @relation(fields: [vendorId], references: [id])
+  quotation    VendorQuotation?  @relation(fields: [quotationId], references: [id])
+  project      Project?          @relation(fields: [projectId], references: [id])
+  budgetLine   BudgetLine?       @relation(fields: [budgetLineId], references: [id])
+  businessUnit BusinessUnit?     @relation(fields: [businessUnitId], references: [id])
+  lines        PoLine[]
+  grns         Grn[]
+  invoices     VendorInvoice[]
+  documents    PoDocument[]
+  events         PoEvent[]
+  paymentTerms   PoPaymentTerm[]
+  termConditions PoTermCondition[]
+
+  @@index([vendorId])
+  @@index([projectId])
+  @@index([businessUnitId, status])
+  @@index([status, poDate])
+  @@map("purchase_order")
+}
+
+model PoLine {
+  id             String    @id @db.VarChar(26)
+  poId           String    @map("po_id") @db.VarChar(26)
+  itemId         String?   @map("item_id") @db.VarChar(26)
+  description    String    @db.VarChar(500)
+  uom            String    @db.VarChar(16)
+  hsnSacCode     String?   @map("hsn_sac_code") @db.VarChar(16)
+  qty            Decimal   @db.Decimal(18, 4)
+  ratePaise      BigInt    @map("rate_paise")
+  discountPct    Decimal   @default(0) @map("discount_pct") @db.Decimal(5, 2)
+  gstRateBps     Int       @default(0) @map("gst_rate_bps")
+  supplyType     String    @default("INTRA") @map("supply_type") @db.VarChar(8)
+  cgstPaise      BigInt    @default(0) @map("cgst_paise")
+  sgstPaise      BigInt    @default(0) @map("sgst_paise")
+  igstPaise      BigInt    @default(0) @map("igst_paise")
+  lineTotalPaise BigInt    @default(0) @map("line_total_paise")
+  deliveryDate   DateTime? @map("delivery_date") @db.Date
+  qtyReceived    Decimal   @default(0) @map("qty_received") @db.Decimal(18, 4)
+  qtyAccepted    Decimal   @default(0) @map("qty_accepted") @db.Decimal(18, 4)
+  sortOrder      Int       @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  oemCatalogItemId String? @map("oem_catalog_item_id") @db.VarChar(26)
+
+  po             PurchaseOrder  @relation(fields: [poId], references: [id], onDelete: Cascade)
+  item           Item?          @relation(fields: [itemId], references: [id])
+  oemCatalogItem OemCatalogItem? @relation(fields: [oemCatalogItemId], references: [id])
+  grnLines       GrnLine[]
+
+  @@index([poId])
+  @@index([itemId])
+  @@index([oemCatalogItemId])
+  @@map("po_line")
+}
+
+model PoDocument {
+  id          String @id @db.VarChar(26)
+  poId        String @map("po_id") @db.VarChar(26)
+  name        String @db.VarChar(255)
+  fileName    String @map("file_name") @db.VarChar(255)
+  mimeType    String @map("mime_type") @db.VarChar(128)
+  fileSize    Int    @map("file_size")
+  storagePath String @map("storage_path") @db.VarChar(512)
+  sortOrder   Int    @default(0) @map("sort_order")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  po PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId])
+  @@map("po_document")
+}
+
+model PoEvent {
+  id          String   @id @db.VarChar(26)
+  poId        String   @map("po_id") @db.VarChar(26)
+  fromStatus  String   @map("from_status") @db.VarChar(24)
+  toStatus    String   @map("to_status") @db.VarChar(24)
+  actorUserId String   @map("actor_user_id") @db.VarChar(26)
+  actorRole   String   @default("user") @map("actor_role") @db.VarChar(32)
+  comment     String?  @db.Text
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  po PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId, occurredAt])
+  @@map("po_event")
+}
+
+model PoPaymentTerm {
+  id          String @id @db.VarChar(26)
+  poId        String @map("po_id") @db.VarChar(26)
+  description String @db.VarChar(500)
+  sortOrder   Int    @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  po PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId])
+  @@map("po_payment_term")
+}
+
+model PoTermCondition {
+  id          String @id @db.VarChar(26)
+  poId        String @map("po_id") @db.VarChar(26)
+  description String @db.VarChar(1000)
+  sortOrder   Int    @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  po PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId])
+  @@map("po_term_condition")
+}
+
+model Grn {
+  id            String   @id @db.VarChar(26)
+  grnNo         String   @unique @map("grn_no") @db.VarChar(32)
+  poId          String   @map("po_id") @db.VarChar(26)
+  receivedDate  DateTime @map("received_date") @db.Date
+  receivedById  String   @map("received_by_id") @db.VarChar(26)
+  warehouseNote String?  @map("warehouse_note") @db.VarChar(255)
+  qualityStatus String   @default("PENDING") @map("quality_status") @db.VarChar(16) // PENDING, ACCEPTED, PARTIAL_REJECT, REJECTED
+  notes         String?  @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  po        PurchaseOrder @relation(fields: [poId], references: [id])
+  lines     GrnLine[]
+  documents GrnDocument[]
+  invoices  VendorInvoice[]
+
+  @@index([poId])
+  @@map("grn")
+}
+
+model GrnLine {
+  id              String  @id @db.VarChar(26)
+  grnId           String  @map("grn_id") @db.VarChar(26)
+  poLineId        String  @map("po_line_id") @db.VarChar(26)
+  qtyReceived     Decimal @map("qty_received") @db.Decimal(18, 4)
+  qtyAccepted     Decimal @map("qty_accepted") @db.Decimal(18, 4)
+  qtyRejected     Decimal @default(0) @map("qty_rejected") @db.Decimal(18, 4)
+  rejectionReason String? @map("rejection_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  grn    Grn    @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  poLine PoLine @relation(fields: [poLineId], references: [id])
+
+  @@index([grnId])
+  @@index([poLineId])
+  @@map("grn_line")
+}
+
+model GrnDocument {
+  id          String @id @db.VarChar(26)
+  grnId       String @map("grn_id") @db.VarChar(26)
+  name        String @db.VarChar(255)
+  fileName    String @map("file_name") @db.VarChar(255)
+  mimeType    String @map("mime_type") @db.VarChar(128)
+  fileSize    Int    @map("file_size")
+  storagePath String @map("storage_path") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+
+  grn Grn @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@index([grnId])
+  @@map("grn_document")
+}
+
+model VendorInvoice {
+  id                 String    @id @db.VarChar(26)
+  poId               String    @map("po_id") @db.VarChar(26)
+  grnId              String?   @map("grn_id") @db.VarChar(26)
+  vendorId           String    @map("vendor_id") @db.VarChar(26)
+  vendorInvoiceNo    String    @map("vendor_invoice_no") @db.VarChar(64)
+  invoiceDate        DateTime  @map("invoice_date") @db.Date
+  dueDate            DateTime  @map("due_date") @db.Date
+  invoiceAmountPaise BigInt    @map("invoice_amount_paise")
+  gstAmountPaise     BigInt    @default(0) @map("gst_amount_paise")
+  tdsRateBps         Int       @default(0) @map("tds_rate_bps")
+  tdsAmountPaise     BigInt    @default(0) @map("tds_amount_paise")
+  netPayablePaise    BigInt    @default(0) @map("net_payable_paise")
+  paidPaise          BigInt    @default(0) @map("paid_paise")
+  matchStatus        String    @default("PENDING") @map("match_status") @db.VarChar(16) // PENDING, MATCHED, MISMATCH
+  matchDetails       Json?     @map("match_details")
+  status             String    @default("PENDING") @db.VarChar(16) // PENDING, PARTIALLY_PAID, PAID
+  attachmentName     String?   @map("attachment_name") @db.VarChar(255)
+  attachmentPath     String?   @map("attachment_path") @db.VarChar(512)
+  notes              String?   @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  po       PurchaseOrder  @relation(fields: [poId], references: [id])
+  grn      Grn?           @relation(fields: [grnId], references: [id])
+  vendor   Vendor         @relation(fields: [vendorId], references: [id])
+  payments VendorPayment[]
+
+  @@index([poId])
+  @@index([vendorId, status])
+  @@index([dueDate, status])
+  @@map("vendor_invoice")
+}
+
+model VendorPayment {
+  id           String   @id @db.VarChar(26)
+  invoiceId    String   @map("invoice_id") @db.VarChar(26)
+  paymentDate  DateTime @map("payment_date") @db.Date
+  amountPaise  BigInt   @map("amount_paise")
+  paymentMode  String   @map("payment_mode") @db.VarChar(16) // NEFT, RTGS, CHEQUE, UPI, CASH
+  utrReference String?  @map("utr_reference") @db.VarChar(64)
+  remarks      String?  @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String   @map("created_by") @db.VarChar(26)
+  updatedBy String   @map("updated_by") @db.VarChar(26)
+
+  invoice VendorInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
+  @@map("vendor_payment")
+}
+
+// TODO(future): Indent, MaterialIssue, MaterialReturn, StoreLocation, StockLedgerEntry, VendorPerformanceSnapshot
+
+// ==========================================================================
+// Approval Engine — generic multi-step approval workflows
+// ==========================================================================
+
+model ApprovalWorkflow {
+  id         String  @id @db.VarChar(26)
+  entityType String  @map("entity_type") @db.VarChar(64) // MATERIAL_REQUEST, PURCHASE_ORDER, etc.
+  name       String  @db.VarChar(255)
+  isActive   Boolean @default(true) @map("is_active")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  steps    ApprovalWorkflowStep[]
+  requests ApprovalRequest[]
+
+  @@index([entityType, isActive])
+  @@map("approval_workflow")
+}
+
+model ApprovalWorkflowStep {
+  id               String  @id @db.VarChar(26)
+  workflowId       String  @map("workflow_id") @db.VarChar(26)
+  stepOrder        Int     @map("step_order")
+  stepName         String  @map("step_name") @db.VarChar(128)  // e.g. "PM Approval", "BU Head Approval"
+  approverRoleName String? @map("approver_role_name") @db.VarChar(64) // role name to match (OR with specificUserId)
+  specificUserId   String? @map("specific_user_id") @db.VarChar(26)   // specific user (OR with role)
+  minValuePaise    BigInt? @map("min_value_paise")   // step only applies if value >= this
+  maxValuePaise    BigInt? @map("max_value_paise")   // step only applies if value <= this
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workflow ApprovalWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, stepOrder])
+  @@index([workflowId])
+  @@map("approval_workflow_step")
+}
+
+model ApprovalRequest {
+  id                String   @id @db.VarChar(26)
+  workflowId        String   @map("workflow_id") @db.VarChar(26)
+  entityType        String   @map("entity_type") @db.VarChar(64)
+  entityId          String   @map("entity_id") @db.VarChar(26)
+  requestedByUserId String   @map("requested_by_user_id") @db.VarChar(26)
+  currentStepOrder  Int      @map("current_step_order")
+  status            String   @default("PENDING") @db.VarChar(16) // PENDING, APPROVED, REJECTED, RETURNED
+  valuePaise        BigInt   @default(0) @map("value_paise")
+  title             String?  @db.VarChar(255) // display title for approval inbox
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workflow ApprovalWorkflow @relation(fields: [workflowId], references: [id])
+  actions  ApprovalAction[]
+
+  @@index([entityType, entityId])
+  @@index([status, currentStepOrder])
+  @@index([requestedByUserId])
+  @@map("approval_request")
+}
+
+model ApprovalAction {
+  id          String   @id @db.VarChar(26)
+  requestId   String   @map("request_id") @db.VarChar(26)
+  stepOrder   Int      @map("step_order")
+  actorUserId String   @map("actor_user_id") @db.VarChar(26)
+  action      String   @db.VarChar(16) // APPROVE, REJECT, RETURN
+  comment     String?  @db.Text
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  request ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, occurredAt])
+  @@index([actorUserId])
+  @@map("approval_action")
+}
 
 // ==========================================================================
 // Cross-cutting
@@ -2187,4 +2737,70 @@ model DocumentEntityLink {
   @@unique([documentId, entityType, entityId])
   @@index([entityType, entityId])
   @@map("document_entity_link")
+}
+
+// ===== OEM Catalog & Price Lists =====
+
+model VendorPriceList {
+  id             String    @id @db.VarChar(26)
+  vendorId       String    @map("vendor_id") @db.VarChar(26)
+  name           String    @db.VarChar(255)
+  priceDate      DateTime  @map("price_date") @db.Date
+  status         String    @default("ACTIVE") @db.VarChar(16) // ACTIVE, EXPIRED, SUPERSEDED
+  notes          String?   @db.Text
+  attachmentName String?   @map("attachment_name") @db.VarChar(255)
+  attachmentPath String?   @map("attachment_path") @db.VarChar(512)
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  vendor Vendor           @relation(fields: [vendorId], references: [id])
+  items  OemCatalogItem[]
+
+  @@index([vendorId, status])
+  @@map("vendor_price_list")
+}
+
+model OemCatalogItem {
+  id              String    @id @db.VarChar(26)
+  masterItemId    String    @map("master_item_id") @db.VarChar(26)
+  vendorId        String    @map("vendor_id") @db.VarChar(26)
+  priceListId     String?   @map("price_list_id") @db.VarChar(26)
+
+  oemPartNo       String?   @map("oem_part_no") @db.VarChar(128)
+  modelName       String    @map("model_name") @db.VarChar(255)
+  brand           String?   @db.VarChar(128)
+  description     String?   @db.Text
+  specifications  Json?
+  unitPricePaise  BigInt    @map("unit_price_paise")
+  moq             Int       @default(1)
+  leadTimeDays    Int?      @map("lead_time_days")
+  warranty        String?   @db.VarChar(128)
+  uom             String    @default("NOS") @db.VarChar(16)
+  hsn             String?   @db.VarChar(16)
+  gstRateBps      Int       @default(0) @map("gst_rate_bps")
+  validFrom       DateTime? @map("valid_from") @db.Date
+  validTo         DateTime? @map("valid_to") @db.Date
+  status          String    @default("ACTIVE") @db.VarChar(16) // ACTIVE, DISCONTINUED
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  createdBy String    @map("created_by") @db.VarChar(26)
+  updatedBy String    @map("updated_by") @db.VarChar(26)
+
+  masterItem     Item              @relation(fields: [masterItemId], references: [id])
+  vendor         Vendor            @relation(fields: [vendorId], references: [id])
+  priceList      VendorPriceList?  @relation(fields: [priceListId], references: [id])
+  quotationLines VendorQuotationLine[]
+  poLines        PoLine[]
+
+  @@index([masterItemId])
+  @@index([vendorId])
+  @@index([priceListId])
+  @@index([vendorId, oemPartNo])
+  @@map("oem_catalog_item")
 }

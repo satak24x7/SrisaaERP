@@ -44,6 +44,17 @@ import { expenseFinanceRouter } from './modules/finance/expense-finance.routes.j
 import { expenseSheetRouter, expenseCategoryRouter } from './modules/expense-sheet/routes.js';
 import { mailRouter } from './modules/mail/routes.js';
 import { aiRulesRouter } from './modules/admin/ai-rules/routes.js';
+import { approvalRouter } from './modules/approval/routes.js';
+import { vendorRouter } from './modules/procurement/vendor.routes.js';
+import { itemRouter } from './modules/procurement/item.routes.js';
+import { quotationRouter } from './modules/procurement/quotation.routes.js';
+import { rateComparisonRouter } from './modules/procurement/rate-comparison.routes.js';
+import { poRouter } from './modules/procurement/po.routes.js';
+import { grnRouter } from './modules/procurement/grn.routes.js';
+import { invoiceRouter } from './modules/procurement/invoice.routes.js';
+import { materialRequestRouter } from './modules/procurement/material-request.routes.js';
+import { oemCatalogRouter } from './modules/procurement/oem-catalog.routes.js';
+import { priceListRouter } from './modules/procurement/price-list.routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -147,6 +158,21 @@ export function createApp(): Express {
   app.use('/api/v1/finance/gst-statement', gstStatementRouter);
   app.use('/api/v1/finance/expenditure-report', expenditureReportRouter);
   app.use('/api/v1/finance/expense-advances', expenseFinanceRouter);
+
+  // Approval Engine
+  app.use('/api/v1/approvals', approvalRouter);
+
+  // Procurement
+  app.use('/api/v1/material-requests', materialRequestRouter);
+  app.use('/api/v1/vendors', vendorRouter);
+  app.use('/api/v1/items', itemRouter);
+  app.use('/api/v1/quotations', quotationRouter);
+  app.use('/api/v1/rate-comparisons', rateComparisonRouter);
+  app.use('/api/v1/purchase-orders', poRouter);
+  app.use('/api/v1/grns', grnRouter);
+  app.use('/api/v1/vendor-invoices', invoiceRouter);
+  app.use('/api/v1/oem-catalog', oemCatalogRouter);
+  app.use('/api/v1/price-lists', priceListRouter);
 
   // 404 + error handler (last)
   app.use(notFoundHandler);

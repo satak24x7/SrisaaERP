@@ -382,15 +382,15 @@ interface TenderDetail {
                     </div>
                   }
                 @if (techSections().length > 0) {
-                  <table class="w-full text-sm border-collapse">
+                  <table class="w-full text-sm border-collapse table-fixed">
                     <thead>
                       <tr class="bg-gray-50 border-b border-gray-200 text-left">
-                        <th class="px-3 py-2 w-10">#</th>
-                        <th class="px-3 py-2">Section / Criterion</th>
-                        <th class="px-3 py-2 w-20 text-center">Max</th>
-                        <th class="px-3 py-2" style="min-width:220px">Scoring</th>
-                        <th class="px-3 py-2 w-24 text-center">Score</th>
-                        <th class="px-3 py-2 w-44">Remarks</th>
+                        <th class="px-3 py-2" style="width:36px">#</th>
+                        <th class="px-3 py-2" style="width:160px">Section / Criterion</th>
+                        <th class="px-3 py-2 text-center" style="width:52px">Max</th>
+                        <th class="px-3 py-2" style="width:50%">Scoring</th>
+                        <th class="px-3 py-2 text-center" style="width:72px">Score</th>
+                        <th class="px-3 py-2" style="width:160px">Remarks</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -423,8 +423,8 @@ interface TenderDetail {
                           <td class="px-3 py-2 text-center font-semibold text-indigo-700">{{ sec.maxMarks }}</td>
                           <td class="px-3 py-2">
                             @if (!sec._expanded) {
-                              <!-- Dropdown mode -->
-                              @if (sec.subCriteria.length > 0) {
+                              @if (sec.subCriteria.length > 1) {
+                                <!-- Dropdown mode: multiple options -->
                                 <p-select appendTo="body"
                                   [(ngModel)]="sec._selectedSubId"
                                   [options]="sec.subCriteria"
@@ -442,21 +442,30 @@ interface TenderDetail {
                                     </div>
                                   </ng-template>
                                   <ng-template pTemplate="selectedItem" let-item>
-                                    <div class="flex justify-between w-full gap-2">
-                                      <span class="text-sm truncate">{{ item.description }}</span>
+                                    <div class="flex justify-between w-full gap-2 overflow-hidden">
+                                      <span class="text-sm truncate min-w-0">{{ item.description }}</span>
                                       <span class="text-xs font-semibold text-indigo-600 shrink-0">{{ item.maxMarks }} marks</span>
                                     </div>
                                   </ng-template>
                                 </p-select>
+                              } @else if (sec.subCriteria.length === 1) {
+                                <!-- Single criterion: show text directly -->
+                                <span class="text-sm text-gray-700 truncate block" [pTooltip]="sec.subCriteria[0].description" tooltipPosition="top">{{ sec.subCriteria[0].description }}</span>
                               } @else {
                                 <span class="text-xs text-gray-400 italic">No criteria</span>
                               }
                             }
                           </td>
                           <td class="px-3 py-2 text-center">
-                            <span class="font-semibold text-lg" [class]="getSectionScore(sec) > 0 ? 'text-indigo-700' : 'text-gray-300'">
-                              {{ getSectionScore(sec) }}
-                            </span>
+                            @if (!sec._expanded && (sec.subCriteria.length <= 1 || sec._manual)) {
+                              <!-- Editable score for single-criterion or manual sections -->
+                              <input pInputText type="number" [ngModel]="sec._expectedScore ?? 0" (ngModelChange)="onSectionScoreEdit(sec, $event)"
+                                class="w-16 text-center text-sm p-1 font-semibold" [min]="0" [max]="sec.maxMarks" />
+                            } @else {
+                              <span class="font-semibold text-lg" [class]="getSectionScore(sec) > 0 ? 'text-indigo-700' : 'text-gray-300'">
+                                {{ getSectionScore(sec) }}
+                              </span>
+                            }
                           </td>
                           <td class="px-3 py-2">
                             @if (!sec._expanded) {
@@ -473,8 +482,9 @@ interface TenderDetail {
                               <td class="px-3 py-1.5 text-center text-gray-500">{{ sub.maxMarks }}</td>
                               <td class="px-3 py-1.5 text-xs text-gray-400">{{ sub.scoringMethod ?? '' }}</td>
                               <td class="px-3 py-1.5 text-center">
-                                <input pInputText type="number" [(ngModel)]="sub._score" class="w-16 text-center text-sm p-1"
-                                  [min]="0" [max]="sub.maxMarks" (blur)="onSubScoreChange(sec)" />
+                                <p-inputNumber [(ngModel)]="sub._score" [min]="0" [max]="sub.maxMarks || sec.maxMarks"
+                                  [showButtons]="false" inputStyleClass="w-16 text-center text-sm p-1"
+                                  (onBlur)="onSubScoreBlur(sec, sub)" />
                               </td>
                               <td class="px-3 py-1.5">
                                 <input pInputText [(ngModel)]="sub._remarks" class="w-full text-xs p-1" placeholder="Notes..." (blur)="markBidEvalDirty()" />
@@ -1258,16 +1268,25 @@ export class TenderDetailComponent implements OnInit {
     this.markBidEvalDirty();
   }
 
-  onSubScoreChange(sec: { subCriteria: Array<{ _score?: number | null; maxMarks: number }>; _expectedScore: number | null; _expanded: boolean }): void {
-    // Clamp and sum sub-scores
-    for (const sub of sec.subCriteria) {
-      if (sub._score != null) {
-        if (sub._score < 0) sub._score = 0;
-        if (sub._score > sub.maxMarks) sub._score = sub.maxMarks;
-      }
+  onSubScoreBlur(sec: { subCriteria: Array<{ _score?: number | null; maxMarks: number }>; _expectedScore: number | null; maxMarks: number },
+    sub: { _score?: number | null; maxMarks: number }): void {
+    if (sub._score != null) {
+      const n = Number(sub._score);
+      const cap = sub.maxMarks || sec.maxMarks;
+      sub._score = isNaN(n) ? null : Math.min(Math.max(n, 0), cap);
+    }
+    // Clamp so total of all subs doesn't exceed section max
+    const othersTotal = sec.subCriteria.filter(s => s !== sub).reduce((sum, s) => sum + (s._score ?? 0), 0);
+    if (sub._score != null && othersTotal + sub._score > sec.maxMarks) {
+      sub._score = Math.max(0, sec.maxMarks - othersTotal);
     }
     sec._expectedScore = sec.subCriteria.reduce((sum, s) => sum + (s._score ?? 0), 0);
-    this.techSections.set([...this.techSections()]);
+    this.markBidEvalDirty();
+  }
+
+  onSectionScoreEdit(sec: { _expectedScore: number | null; maxMarks: number }, value: unknown): void {
+    const n = Number(value);
+    sec._expectedScore = (value == null || value === '' || isNaN(n)) ? null : Math.min(Math.max(n, 0), sec.maxMarks);
     this.markBidEvalDirty();
   }
 

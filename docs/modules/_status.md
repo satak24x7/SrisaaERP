@@ -2,7 +2,7 @@
 
 Tracks what's shipped, in progress, and queued. Claude Code should update this at the end of each feature.
 
-_Last updated: 2026-04-29 — Session 10: Google Drive DMS migration, Bid Evaluation (PQ + Technical scoring), mail attachment to DMS, document browser UX_
+_Last updated: 2026-05-13 — Session 15: OEM Catalog, Price Lists, Bid Eval Fixes, Excel/AI Import_
 
 ## Status legend
 
@@ -113,15 +113,31 @@ _Last updated: 2026-04-29 — Session 10: Google Drive DMS migration, Bid Evalua
 
 | Component | Status | Notes |
 |---|---|---|
-| Item + Vendor masters | 🔲 | FR-5.1, 5.2 |
-| Material Request | 🔲 | FR-5.3–5.5 |
-| Indent + RFQ | 🔲 | FR-5.6, 5.7 |
-| Purchase Order + commitment | 🔲 | FR-5.8, 5.9 |
-| GRN | 🔲 | FR-5.10 |
-| Material Issue + acknowledgement | 🔲 | FR-5.11 |
-| Material Trace | 🔲 | FR-5.12 |
-| Stock ledger | 🔲 | FR-5.13 |
-| Vendor Scorecard | 🔲 | FR-5.16 |
+| Item master (Master Items) | 🟢 | CRUD with SKU, name, UoM, category (from lookup list `item_category`), HSN/SAC, default GST rate, make/model. OEM Options count column. |
+| OEM Catalog | 🟢 | Two-tier: Master Item → OemCatalogItem (vendor-specific: model, part no, brand, price, specs, warranty, MOQ, lead time). CRUD API `/oem-catalog`. Browse page with vendor/master item/brand/search filters. OEM picker in PO + quotation line dialogs. |
+| Vendor Price Lists | 🟢 | `VendorPriceList` model (vendor, name, date, status, attachment). CRUD + list page. 4-step Excel/AI import wizard: upload → map fields (inverted: system fields as rows) with inline defaults → link to master items (auto-link from existing catalog + by name + bulk create) → preview + import. Upserts by vendor+partNo. Supports image/PDF via Gemini AI extraction. |
+| Vendor master | 🟢 | CRUD with KYC lifecycle (DRAFT→KYC_PENDING→ACTIVE→BLOCKED), vendorCode auto-gen, GSTIN/PAN validation, duplicate detection, MSME/TDS/OEM fields |
+| Vendor KYC documents | 🟢 | Upload/delete typed docs (GST_CERT, PAN_CARD, MSME, etc.) via DMS storage |
+| Vendor bank details (dual-control) | 🟢 | CRUD with dual-control verification (verifier ≠ creator), primary flag |
+| Material Request | 🟢 | Full CRUD with lines, submit for approval (integrates with approval engine), approve/reject/return, line-level qty/rate tracking, auto-number MR-FY-XXXX |
+| Vendor Quotation | 🟢 | CRUD with line-level GST (INTRA/INTER/EXEMPT), file attachment, auto-numbering. Excel/AI import with column mapping + defaults. |
+| Rate Comparison | 🟢 | Link 2-5 quotations, auto-calculate L1 vendor, finalize with reason |
+| Purchase Order + commitment | 🟢 | Full PO lifecycle (DRAFT→APPROVED→ISSUED→COMPLETED), budget commit/reverse, line CRUD with OEM catalog picker, payment terms, T&Cs, events, documents |
+| GRN | 🟢 | Qty validation, auto quality status, auto PO transition, budget actuals, quality evidence docs |
+| Vendor Invoice + 3-way match | 🟢 | Header-level PO vs GRN vs Invoice match (1₹ tolerance), TDS, aging report, payment tracking with UTR |
+| Approval Engine (generic) | 🟢 | Multi-step configurable workflows, value-based routing, self-approval prevention, notifications. Serves MR, PO, future modules |
+| Indent + RFQ | 🔲 | Phase 2: RFQ linking PRs to vendors, technical evaluation |
+| Technical Evaluation | 🔲 | Phase 2: parameter-level Pass/Fail per quotation |
+| Dispatch + Inspection | 🔲 | Phase 3: dispatch tracking, QA sign-off |
+| Line-level 3-way match | 🔲 | Phase 3: per-line matching with configurable tolerances |
+| Invoice exceptions + debit/credit notes | 🔲 | Phase 3: classified exceptions, resolution workflow |
+| Advance Payment | 🔲 | Phase 3: proforma invoice, netting |
+| TDS master | 🔲 | Phase 4: sections, rates, auto-calculation |
+| PO closure checklist | 🔲 | Phase 4: mandatory document gate |
+| Vendor Scorecard | 🔲 | Phase 4: computed from PO history |
+| Procurement KPI dashboard | 🔲 | Phase 4: cycle time, on-time delivery, spend analysis |
+| Material Issue + acknowledgement | 🔲 | Future |
+| Stock ledger | 🔲 | Future |
 
 ## R4.5 — Bid Management (new)
 
@@ -165,6 +181,8 @@ _Last updated: 2026-04-29 — Session 10: Google Drive DMS migration, Bid Evalua
 | Google Drive DMS | 🟢 | All document storage migrated to Google Drive via OAuth. Folder structure: Shared/{Company,Tenders,Projects,Expenses,Travel}, Private/{User}. All upload/download routes use dms-storage layer. Migration script for existing files. |
 | Document Browser enhancements | 🟢 | Wider folder tree (432px). View files in browser (not just download). Loading spinner on file fetch. Delete empty folders. Linked Entities panel close button. |
 | Activity linked entity visibility | 🟢 | Fixed "Linked To" column invisible on dark theme — now uses PrimeNG p-tag with severity="secondary". |
+| Generic Approval Engine | 🟢 | Multi-step configurable approval workflows. ApprovalWorkflow + steps + requests + actions. Self-approval prevention. Value-based step routing. Role or user-specific approvers. Notifications. Admin UI under System. Approval Inbox as top-level page. |
+| IMAP error handling | 🟢 | ImapFlow client error handler prevents unhandled ECONNRESET from crashing API during mail sync. |
 
 ## R10 — Remaining Organization Masters & Platform Hardening
 
@@ -203,12 +221,12 @@ _Last updated: 2026-04-29 — Session 10: Google Drive DMS migration, Bid Evalua
 
 ## Next up (top of queue)
 
-1. **R4 Evaluation & Award** — Bid evaluation sub-stages, clarification log, award + auto-handover
-2. **R6 Expense Management** — Expense sheets, approval engine, policy engine
-3. **R3.1 Execution Enhancements** — items deferred from R3 (many depend on R4/R6)
-4. Pick items from **R10** (Org masters, RBAC, Expiry dashboard, Ionic mobile)
-5. **R11 Tender Workflows** — Managed Tenders, Go/No-Go, Bid Submission
+1. **R7 Phase 2** — RFQ module, Technical Evaluation, Quotation immutability + revision chain, Comparative Statement (weighted scoring, negotiation, PRN), PO enhancements (vendor ack, amendments, MR linkage)
+2. **R7 Phase 3** — Dispatch tracking, Inspection Reports, Line-level 3-way match, Invoice exceptions + debit/credit notes, Advance Payment
+3. **R7 Phase 4** — TDS master, PO closure checklist, Vendor scorecard, Procurement KPI dashboard, Audit bundle export
+4. **R4 Evaluation & Award** — Bid evaluation sub-stages, clarification log, award + auto-handover
+5. **R3.1 Execution Enhancements** — items deferred from R3
 
-## Pending decision
+## Implementation plan
 
-User to choose next release.
+Full 4-phase procurement overhaul plan at `.claude/plans/cuddly-knitting-lemur.md`. Phase 1 (Approval Engine + Vendor KYC + MR) shipped 2026-05-09. Phases 2-4 pending.
